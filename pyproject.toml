@@ -1,0 +1,14 @@
+[project]
+name = "wanxiao-demo"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "ipdb>=0.13.13",
+    "numpy>=2.4.2",
+    "openai>=2.18.0",
+    "python-dotenv>=1.2.1",
+    "sentence-transformers>=5.2.2",
+    "sqlite-vec>=0.1.6",
+]
