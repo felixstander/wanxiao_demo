@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 对话平台</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="chat-shell">
+    <div class="chat-container">
+      <header class="chat-header">
+        <h1>AI 对话助手</h1>
+        <p>OpenRouter · DeepAgents · 本地双层记忆</p>
+      </header>
+
+      <div class="chat-messages" id="chatMessages">
+        <div class="message bot-message">
+          <div class="message-content">
+            <p>我是你的万能营销助手，你可随时给我提问哦。</p>
+          </div>
+          <div class="message-time">现在</div>
+        </div>
+      </div>
+
+      <div class="suggested-questions" id="suggestedQuestions">
+        <h3>推荐问题</h3>
+        <div class="questions-grid">
+          <button class="suggested-btn" data-question="介绍一下你能做什么。">介绍一下你能做什么。</button>
+          <button class="suggested-btn" data-question="请总结我今天的关键对话，并写入记忆。">请总结我今天的关键对话，并写入记忆。</button>
+          <button class="suggested-btn" data-question="看看我今日的任务是什么。">看看我今日的任务是什么。</button>
+          <button class="suggested-btn" data-question="告诉我你当前长期记忆里有什么。">告诉我你当前长期记忆里有什么。</button>
+        </div>
+      </div>
+
+      <div class="input-area">
+        <div class="input-container">
+          <input type="text" id="messageInput" placeholder="请输入你的问题..." />
+          <button id="sendButton">发送</button>
+        </div>
+      </div>
+    </div>
+
+    <aside class="process-panel">
+      <div class="process-header">思考过程</div>
+      <div class="process-logs" id="processLogs">
+        <div class="process-line">等待任务...</div>
+      </div>
+    </aside>
+  </div>
+
+  <script src="/static/script.js"></script>
+</body>
+</html>
