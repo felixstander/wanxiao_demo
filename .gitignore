@@ -5,7 +5,8 @@ build/
 dist/
 wheels/
 *.egg-info
-.env
 
 # Virtual environments
 .venv
+#忽略所有.env文件
+.env
