@@ -28,7 +28,7 @@ class InsuranceDatabase:
                 "type": InsuranceProductType.MEDICAL,
                 "tags": ["报销", "住院", "几百元", "高保额"],
                 "base_price": 300,
-                "description": "国民级医疗险，最高600万保额。包含一般医疗、重疾医疗，扣除1万免赔额后100%报销。适合需要大额医疗费用保障的人群。",
+                "description": "投保年龄要求：18-50岁，国民级医疗险，最高600万保额。包含一般医疗、重疾医疗，扣除1万免赔额后100%报销。适合需要大额医疗费用保障的人群。",
             },
             {
                 "id": "prod_crit_001",
@@ -195,7 +195,6 @@ class InsuranceDatabase:
 
         if not target:
             return {"error": f"未找到包含 '{product_name_keyword}' 的产品"}
-
 
         # 2. 简单的费率逻辑
         ratio = 1.0

@@ -1,65 +1,66 @@
-#TODO:
+# TODO
 
-1.skills还是没加载成功 
-2.前端展示无回复，还是没有解决
+1. skills 仍未成功加载
 
-# DeepAgents + OpenRouter + Vanilla Frontend Demo
+~~2. 前端仍有无回复的情况~~
 
-## Features
+# DeepAgents + OpenRouter + 原生前端 Demo
 
-- Uses LangChain DeepAgents (`create_deep_agent`) as the core agent runtime.
-- Uses OpenRouter model via `langchain-openai` (`z-ai/glm-4.5-flash` by default).
-- Loads skill files from `~/.deepagents/agent/skills` and mounts them into `/skills/*`.
-- Uses local filesystem backend and stores memory in project `memories/` directory.
-- Frontend framework replaced to vanilla `HTML + CSS + JavaScript` (based on target article style).
-- Backend serves static frontend with FastAPI and exposes `/api/chat` for real agent calls.
-- Frontend consumes `/api/chat/stream` for streaming model output.
-- UI includes a right-side `思考过程` panel showing step events and tool-call/process traces from LangGraph stream events.
+## 功能说明
 
-## Setup
+- 使用 LangChain DeepAgents（`create_deep_agent`）作为核心 Agent 运行时。
+- 通过 `langchain-openai` 接入 OpenRouter 模型（默认 `z-ai/glm-4.5-flash`）。
+- 从 `~/.deepagents/agent/skills` 加载技能文件，并映射到 `/skills/*`。
+- 使用本地文件系统后端，记忆数据存储在项目内的 `memories/` 目录。
+- 前端使用原生 `HTML + CSS + JavaScript`。
+- 后端使用 FastAPI 提供静态页面与接口（如 `/api/chat`、`/api/chat/stream`）。
+- 前端通过 `/api/chat/stream` 消费流式输出。
+- 界面右侧提供“思考过程”面板，展示 LangGraph 事件、工具调用与阶段信息。
 
-1. Install dependencies:
+## 环境准备
+
+1. 安装依赖：
 
 ```bash
 uv sync
 ```
 
-2. Create env file:
+2. 创建环境变量文件：
 
 ```bash
 cp .env.example .env
 ```
 
-3. Fill in `.env`:
+3. 编辑 `.env`：
 
 ```env
 OPENROUTER_API_KEY="your-openrouter-key"
 OPENROUTER_MODEL="z-ai/glm-4.5-flash"
 ```
 
-## Run
+## 启动项目
 
 ```bash
 uv run python main.py
 ```
 
-Open `http://localhost:7860` in your browser.
+浏览器访问：`http://localhost:7860`
 
-By default, auto-reload is enabled (code change -> process reload).
+默认开启自动重载（代码变更后进程自动重启）。
 
-If you want to disable auto-reload:
+如果要关闭自动重载：
 
 ```bash
 AUTO_RELOAD=0 uv run python main.py
 ```
 
-## Test
+## 运行测试
 
 ```bash
 uv run python -m unittest tests/test_main.py
 ```
 
-## Frontend Structure
+## 前端目录结构
 
 ```text
 frontend/
@@ -68,21 +69,21 @@ frontend/
 └── script.js
 ```
 
-- `index.html`: chat page structure (header/messages/suggested questions/input)
-- `style.css`: modern chat layout + animation + responsive styles
-- `script.js`: native DOM chat logic + `/api/chat` integration
+- `index.html`：聊天页面结构（头部、消息区、技能区、输入区）
+- `style.css`：页面布局、动画、响应式样式
+- `script.js`：前端交互逻辑与接口调用
 
-## Skill Directory
+## 技能目录说明
 
-The app reads all text files recursively under:
+应用会递归读取以下目录中的技能文本文件：
 
 `~/.deepagents/agent/skills`
 
-Each file is exposed to DeepAgents as a virtual file under `/skills/...` so the agent can load relevant skills on demand.
+这些文件会被映射为 DeepAgents 可访问的虚拟路径 `/skills/...`，供 Agent 按需加载。
 
-## Memory Directory (Two-layer Memory)
+## 记忆目录说明（双层记忆）
 
-Memory is stored in local markdown files under project root:
+记忆以 Markdown 形式保存在项目根目录下：
 
 ```text
 memories/
@@ -91,11 +92,11 @@ memories/
     └── YYYY-MM-DD.md
 ```
 
-- `memories/daily/YYYY-MM-DD.md`: short-term daily logs (append-only event notes).
-- `memories/MEMORY.md`: long-term curated memory (preferences, key decisions, contacts, project facts).
+- `memories/daily/YYYY-MM-DD.md`：短期记忆（按天记录的追加日志）
+- `memories/MEMORY.md`：长期记忆（用户偏好、关键决策、联系人、项目事实）
 
-The agent system prompt instructs it to:
+系统提示会引导 Agent：
 
-1. Read long-term memory and recent daily logs at session start.
-2. Write short-term facts to daily log with `## HH:MM - title` format.
-3. Promote stable cross-day knowledge into `MEMORY.md` with deduplication.
+1. 会话开始时读取长期记忆与最近日记。
+2. 将短期信息按 `## HH:MM - 标题` 写入当日日志。
+3. 将跨天稳定信息去重后沉淀到 `MEMORY.md`。

@@ -4,10 +4,34 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI 对话平台</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=__ASSET_VERSION__" />
 </head>
 <body>
   <div class="chat-shell">
+    <aside class="memory-column">
+      <div class="memory-toolbar">
+        <div class="memory-toolbar-title">记忆面板</div>
+        <div class="memory-toolbar-actions">
+          <span class="memory-updated-at" id="memoryUpdatedAt">更新时间: --</span>
+          <button class="memory-refresh-btn" id="memoryRefreshBtn" type="button">刷新</button>
+        </div>
+      </div>
+
+      <section class="memory-card side-memory-card">
+        <div class="memory-title">短期记忆（最近两天）</div>
+        <div class="memory-content" id="shortMemoryContent">
+          <div class="memory-empty">加载中...</div>
+        </div>
+      </section>
+
+      <section class="memory-card side-memory-card">
+        <div class="memory-title">长期记忆</div>
+        <div class="memory-content" id="longMemoryContent">
+          <div class="memory-empty">加载中...</div>
+        </div>
+      </section>
+    </aside>
+
     <div class="chat-container">
       <header class="chat-header">
         <h1>AI 对话助手</h1>
@@ -23,13 +47,10 @@
         </div>
       </div>
 
-      <div class="suggested-questions" id="suggestedQuestions">
-        <h3>推荐问题</h3>
-        <div class="questions-grid">
-          <button class="suggested-btn" data-question="介绍一下你能做什么。">介绍一下你能做什么。</button>
-          <button class="suggested-btn" data-question="请总结我今天的关键对话，并写入记忆。">请总结我今天的关键对话，并写入记忆。</button>
-          <button class="suggested-btn" data-question="看看我今日的任务是什么。">看看我今日的任务是什么。</button>
-          <button class="suggested-btn" data-question="告诉我你当前长期记忆里有什么。">告诉我你当前长期记忆里有什么。</button>
+      <div class="skills-section">
+        <div class="skills-header">Skills 技能包</div>
+        <div class="skills-list" id="skillsList">
+          <div class="skill-item muted">加载中...</div>
         </div>
       </div>
 
@@ -41,14 +62,16 @@
       </div>
     </div>
 
-    <aside class="process-panel">
-      <div class="process-header">思考过程</div>
-      <div class="process-logs" id="processLogs">
-        <div class="process-line">等待任务...</div>
-      </div>
+    <aside class="side-column">
+      <section class="process-panel">
+        <div class="process-header">思考过程</div>
+        <div class="process-logs" id="processLogs">
+          <div class="process-line">等待任务...</div>
+        </div>
+      </section>
     </aside>
   </div>
 
-  <script src="/static/script.js"></script>
+  <script src="/static/script.js?v=__ASSET_VERSION__"></script>
 </body>
 </html>

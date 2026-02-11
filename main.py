@@ -4,14 +4,14 @@ import shutil
 import uuid
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, AsyncIterator, Iterator
 
 import uvicorn
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
@@ -24,7 +24,7 @@ LONG_TERM_FILE = MEMORIES_DIR / "MEMORY.md"
 
 load_dotenv()
 
-model_name = os.getenv("OPENROUTER_MODEL", "z-ai/glm-4.5-flash")
+model_name = os.getenv("OPENROUTER_MODEL", "z-ai/glm-4.7-flash")
 
 
 def _ensure_memory_files(today: date) -> tuple[str, str]:
@@ -69,12 +69,10 @@ def build_agent() -> Any:
     llm = ChatOpenAI(
         model=model_name,
         base_url="https://openrouter.ai/api/v1",
-        temperature=0.2,
+        # temperature=0.2,
     )
 
-    external_skills_dir = Path.home() / ".deepagents" / "agent" / "skills"
-    mirrored_skills_dir = PROJECT_ROOT / "skills"
-    _sync_skills_to_project(external_skills_dir, mirrored_skills_dir)
+    skills_dir = PROJECT_ROOT / "skills"
     today = date.today()
     yesterday = today - timedelta(days=1)
     long_term_path, today_path = _ensure_memory_files(today)
@@ -85,9 +83,9 @@ def build_agent() -> Any:
         "记忆目录结构：\n"
         "- 长期记忆：/memories/MEMORY.md\n"
         "- 每日日志：/memories/daily/YYYY-MM-DD.md\n\n"
-        "每次新会话开始时请先主动回忆：\n"
-        f"1) read_file {long_term_path}\n"
-        f"2) read_file {today_path}\n"
+        # "每次新会话开始时请先主动回忆：\n"
+        # f"1) read_file {long_term_path}\n"
+        # f"2) read_file {today_path}\n"
         f"3) 如果存在，再 read_file {yesterday_path}\n\n"
         "写入规范（参考双层记忆）：\n"
         "A. 每日日志（短期记忆）\n"
@@ -114,7 +112,7 @@ def build_agent() -> Any:
     agent = create_deep_agent(
         model=llm,
         backend=FilesystemBackend(root_dir=str(PROJECT_ROOT), virtual_mode=True),
-        skills=[str(mirrored_skills_dir)],
+        skills=[str(skills_dir)],
         memory=[long_term_path, today_path],
         system_prompt=system_prompt,
     )
@@ -141,6 +139,90 @@ def _sync_skills_to_project(source_dir: Path, target_dir: Path) -> None:
             dst = target_dir / rel_root / file_name
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
+
+
+def _list_skill_packages(skills_dir: Path) -> list[dict[str, str]]:
+    if not skills_dir.exists():
+        return []
+
+    seen: set[str] = set()
+    packages: list[dict[str, str]] = []
+    for skill_file in skills_dir.rglob("SKILL.md"):
+        parent_dir = skill_file.parent
+        try:
+            rel = parent_dir.relative_to(skills_dir).as_posix()
+        except ValueError:
+            continue
+
+        if rel in seen:
+            continue
+
+        seen.add(rel)
+        packages.append({"name": parent_dir.name, "path": f"/skills/{rel}"})
+
+    packages.sort(key=lambda item: (item["name"], item["path"]))
+    return packages
+
+
+def _frontend_asset_version() -> str:
+    candidates = [
+        FRONTEND_DIR / "index.html",
+        FRONTEND_DIR / "style.css",
+        FRONTEND_DIR / "script.js",
+    ]
+    latest_mtime = 0.0
+    for path in candidates:
+        if path.exists():
+            latest_mtime = max(latest_mtime, path.stat().st_mtime)
+
+    return str(int(latest_mtime)) if latest_mtime else "1"
+
+
+def _latest_daily_memory_files(limit: int = 2) -> list[Path]:
+    if not DAILY_DIR.exists():
+        return []
+
+    files = [p for p in DAILY_DIR.glob("*.md") if p.is_file()]
+    files.sort(key=lambda p: p.name, reverse=True)
+    return files[:limit]
+
+
+def _read_text_file(path: Path) -> str:
+    if not path.exists() or not path.is_file():
+        return ""
+    return path.read_text(encoding="utf-8")
+
+
+def _memories_payload() -> dict[str, Any]:
+    today = date.today()
+    _ensure_memory_files(today)
+
+    short_files = _latest_daily_memory_files(limit=2)
+    short_term: list[dict[str, str]] = []
+    max_mtime = LONG_TERM_FILE.stat().st_mtime if LONG_TERM_FILE.exists() else 0.0
+
+    for file_path in short_files:
+        short_term.append(
+            {
+                "date": file_path.stem,
+                "path": f"/memories/daily/{file_path.name}",
+                "content": _read_text_file(file_path),
+            }
+        )
+        max_mtime = max(max_mtime, file_path.stat().st_mtime)
+
+    long_term_content = _read_text_file(LONG_TERM_FILE)
+    if LONG_TERM_FILE.exists():
+        max_mtime = max(max_mtime, LONG_TERM_FILE.stat().st_mtime)
+
+    return {
+        "version": str(int(max_mtime)) if max_mtime else "1",
+        "short_term": short_term,
+        "long_term": {
+            "path": "/memories/MEMORY.md",
+            "content": long_term_content,
+        },
+    }
 
 
 AGENT: Any | None = None
@@ -270,6 +352,45 @@ def _extract_ai_text_from_updates(update_chunk: Any) -> str:
     return candidates[-1] if candidates else ""
 
 
+def _extract_ai_text_from_output(output: Any) -> str:
+    if not isinstance(output, dict):
+        return ""
+
+    messages = output.get("messages")
+    if not isinstance(messages, list):
+        return ""
+
+    for msg in reversed(messages):
+        if _get_msg_type(msg) == "ai":
+            text = _message_content_to_text(_get_msg_content(msg))
+            if text:
+                return text
+    return ""
+
+
+def _extract_event_chunk_text(chunk: Any) -> str:
+    if chunk is None:
+        return ""
+
+    if hasattr(chunk, "content"):
+        return _message_content_to_text(getattr(chunk, "content"))
+
+    if isinstance(chunk, dict) and "content" in chunk:
+        return _message_content_to_text(chunk.get("content"))
+
+    return _message_content_to_text(chunk)
+
+
+def _preview_output(value: Any, limit: int = 120) -> str:
+    text = _message_content_to_text(value)
+    if not text:
+        text = str(value)
+    text = text.replace("\n", " ").strip()
+    if len(text) > limit:
+        return f"{text[:limit]}..."
+    return text
+
+
 def _extract_stream_text(chunk: Any) -> str:
     candidate = chunk
     if isinstance(chunk, (tuple, list)) and chunk:
@@ -337,74 +458,96 @@ def _iter_update_descriptions(update_chunk: Any) -> list[str]:
     return lines
 
 
-def stream_chat_with_agent(
+async def stream_chat_with_agent(
     message: str, history: list[Any], thread_id: str | None
-) -> Iterator[dict[str, Any]]:
+) -> AsyncIterator[dict[str, Any]]:
     resolved_thread_id = thread_id or str(uuid.uuid4())
     normalized_messages = _to_deepagent_messages(history, message)
 
     assistant_full_text = ""
-    got_stream_tokens = False
-    last_node = ""
-    fallback_ai_text_from_updates = ""
+    started_nodes: set[str] = set()
+    completed_nodes: set[str] = set()
+    fallback_ai_text = ""
 
     yield {"event": "start", "thread_id": resolved_thread_id}
 
     try:
-        stream_iter = get_agent().stream(
+        event_iter = get_agent().astream_events(
             {"messages": normalized_messages},
             config={"configurable": {"thread_id": resolved_thread_id}},
-            stream_mode=["messages", "updates"],
-            subgraphs=True,
+            version="v2",
         )
 
-        for item in stream_iter:
-            if (
-                isinstance(item, (tuple, list))
-                and len(item) == 2
-                and item[0] in {"messages", "updates"}
-            ):
-                mode = item[0]
-                chunk = item[1]
-            else:
-                mode = "messages"
-                chunk = item
+        async for event in event_iter:
+            kind = str(event.get("event", ""))
+            name = str(event.get("name", ""))
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            metadata = (
+                event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+            )
+            node_name = str(metadata.get("langgraph_node") or name or "")
 
-            if mode == "updates":
-                for line in _iter_update_descriptions(chunk):
-                    yield {"event": "process", "text": line}
-
-                update_ai_text = _extract_ai_text_from_updates(chunk)
-                if update_ai_text:
-                    fallback_ai_text_from_updates = update_ai_text
+            if kind == "on_chat_model_stream":
+                chunk = data.get("chunk")
+                delta = _extract_event_chunk_text(chunk)
+                if delta:
+                    assistant_full_text += delta
+                    yield {"event": "delta", "text": delta}
                 continue
 
-            message_chunk, metadata = _extract_message_and_metadata(chunk)
-            current_node = metadata.get("langgraph_node", "")
-            if current_node and current_node != last_node:
-                last_node = current_node
-                yield {"event": "process", "text": f"LLM 节点: {current_node}"}
+            if kind == "on_chain_start":
+                if (
+                    node_name
+                    and node_name not in started_nodes
+                    and node_name != "agent"
+                ):
+                    started_nodes.add(node_name)
+                    yield {"event": "process", "text": f"进入阶段: {node_name}"}
+                continue
 
-            delta = _extract_stream_text(message_chunk)
-            if delta:
-                got_stream_tokens = True
-                assistant_full_text += delta
-                yield {"event": "delta", "text": delta}
+            if kind == "on_tool_start":
+                tool_input = data.get("input")
+                yield {"event": "process", "text": f"调用工具: {name}"}
+                if tool_input is not None:
+                    yield {
+                        "event": "process",
+                        "text": f"工具参数: {_preview_output(tool_input)}",
+                    }
+                continue
 
-        if not assistant_full_text and fallback_ai_text_from_updates:
-            assistant_full_text = fallback_ai_text_from_updates
-            yield {"event": "delta", "text": assistant_full_text}
+            if kind == "on_tool_end":
+                tool_output = data.get("output")
+                yield {"event": "process", "text": f"工具完成: {name}"}
+                if tool_output is not None:
+                    yield {
+                        "event": "process",
+                        "text": f"工具结果: {_preview_output(tool_output)}",
+                    }
+                continue
+
+            if kind == "on_chain_end":
+                if (
+                    node_name
+                    and node_name not in completed_nodes
+                    and node_name != "agent"
+                ):
+                    completed_nodes.add(node_name)
+                    yield {"event": "process", "text": f"阶段完成: {node_name}"}
+
+                output = data.get("output")
+                if not assistant_full_text and output is not None:
+                    fallback = _extract_ai_text_from_output(output)
+                    if fallback:
+                        fallback_ai_text = fallback
     except Exception as exc:
-        if got_stream_tokens:
+        if assistant_full_text:
             yield {"event": "error", "detail": f"stream interrupted: {exc}"}
         else:
-            answer, _, _ = chat_with_agent(
-                message=message,
-                history=history,
-                thread_id=resolved_thread_id,
-            )
-            assistant_full_text = answer
-            yield {"event": "delta", "text": answer}
+            yield {"event": "error", "detail": f"stream failed: {exc}"}
+
+    if not assistant_full_text and fallback_ai_text:
+        assistant_full_text = fallback_ai_text
+        yield {"event": "delta", "text": assistant_full_text}
 
     updated_history = list(normalized_messages)
     updated_history.append({"role": "assistant", "content": assistant_full_text})
@@ -435,9 +578,20 @@ def create_app() -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok", "model": model_name}
 
+    @app.get("/api/skills")
+    def skills() -> dict[str, Any]:
+        return {"skills": _list_skill_packages(PROJECT_ROOT / "skills")}
+
+    @app.get("/api/memories")
+    def memories() -> dict[str, Any]:
+        return _memories_payload()
+
     @app.get("/")
-    def index() -> FileResponse:
-        return FileResponse(str(FRONTEND_DIR / "index.html"))
+    def index() -> HTMLResponse:
+        html = (FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
+        version = _frontend_asset_version()
+        rendered = html.replace("__ASSET_VERSION__", version)
+        return HTMLResponse(rendered)
 
     @app.post("/api/chat")
     def chat(payload: ChatRequest) -> dict[str, Any]:
@@ -460,12 +614,12 @@ def create_app() -> FastAPI:
         }
 
     @app.post("/api/chat/stream")
-    def chat_stream(payload: ChatRequest) -> StreamingResponse:
+    async def chat_stream(payload: ChatRequest) -> StreamingResponse:
         if not payload.message.strip():
             raise HTTPException(status_code=400, detail="message cannot be empty")
 
-        def event_generator() -> Iterator[str]:
-            for event in stream_chat_with_agent(
+        async def event_generator() -> AsyncIterator[str]:
+            async for event in stream_chat_with_agent(
                 message=payload.message,
                 history=payload.history,
                 thread_id=payload.thread_id,
