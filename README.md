@@ -1,8 +1,11 @@
-# TODO
+# TODO LIST
 
-1. skills 仍未成功加载
+1. - [] skills 仍未成功加载
+2. - [] 记忆模块完善
+    1. - [] Milvus Lite 记忆检索脚本尝试
+    2. - [] 记忆子Agent从主 Agent解耦出来
+    3. - [] 画记忆模块的架构图
 
-~~2. 前端仍有无回复的情况~~
 
 # DeepAgents + OpenRouter + 原生前端 Demo
 
@@ -60,6 +63,12 @@ AUTO_RELOAD=0 uv run python main.py
 uv run python -m unittest tests/test_main.py
 ```
 
+或运行全部测试：
+
+```bash
+uv run python -m unittest discover -s tests
+```
+
 ## 前端目录结构
 
 ```text
@@ -100,3 +109,27 @@ memories/
 1. 会话开始时读取长期记忆与最近日记。
 2. 将短期信息按 `## HH:MM - 标题` 写入当日日志。
 3. 将跨天稳定信息去重后沉淀到 `MEMORY.md`。
+
+## Milvus Lite 记忆检索脚本
+
+新增脚本：`src/milvus_mem_search.py`
+
+- 数据源目录：`memories/daily/*.md`（仅匹配 `YYYY-MM-DD.md`）
+- 向量库：Milvus Lite 本地文件 `/.memories/milvus_memories.db`
+- 向量模型：`sentence-transformers` 的 `all-MiniLM-L6-v2`
+
+常用命令：
+
+```bash
+# 首次或增量索引 daily 记忆
+uv run python src/milvus_mem_search.py index
+
+# 全量重建索引（drop + rebuild）
+uv run python src/milvus_mem_search.py rebuild
+
+# 语义检索
+uv run python src/milvus_mem_search.py search "今天提过哪些客户需求" --top-k 5
+
+# 查看 collection 统计
+uv run python src/milvus_mem_search.py stats
+```

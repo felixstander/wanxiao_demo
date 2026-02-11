@@ -24,7 +24,7 @@ LONG_TERM_FILE = MEMORIES_DIR / "MEMORY.md"
 
 load_dotenv()
 
-model_name = os.getenv("OPENROUTER_MODEL", "z-ai/glm-4.7-flash")
+model_name = os.getenv("OPENROUTER_MODEL", "z-ai/glm-4.5-flash")
 
 
 def _ensure_memory_files(today: date) -> tuple[str, str]:
@@ -72,7 +72,9 @@ def build_agent() -> Any:
         # temperature=0.2,
     )
 
+    external_skills_dir = Path.home() / ".deepagents" / "agent" / "skills"
     skills_dir = PROJECT_ROOT / "skills"
+    _sync_skills_to_project(external_skills_dir, skills_dir)
     today = date.today()
     yesterday = today - timedelta(days=1)
     long_term_path, today_path = _ensure_memory_files(today)

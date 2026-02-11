@@ -8,6 +8,11 @@ from fastapi.testclient import TestClient
 import main
 
 
+async def _fake_async_events(items):
+    for item in items:
+        yield item
+
+
 class MainApiTests(unittest.TestCase):
     def test_convert_dict_history(self) -> None:
         history = [
@@ -115,7 +120,7 @@ class MainApiTests(unittest.TestCase):
     def test_chat_stream_endpoint(self) -> None:
         client = TestClient(main.app)
 
-        fake_events = iter(
+        fake_events = _fake_async_events(
             [
                 {"event": "start", "thread_id": "thread-2"},
                 {"event": "process", "text": "步骤: planner"},
