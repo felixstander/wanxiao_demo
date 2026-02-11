@@ -7,7 +7,9 @@ wheels/
 *.egg-info
 .ipynb_checkpoints/
 .python-version
+.DS_Store
 # Virtual environments
 .venv
 #忽略所有.env文件
 .env
+
