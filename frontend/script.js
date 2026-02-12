@@ -374,6 +374,9 @@ class ChatApp {
           } else if (payload.event === "delta") {
             fullReply += payload.text || "";
             this.updateBotMessage(botMessageEl, fullReply);
+          } else if (payload.event === "replace") {
+            fullReply = payload.text || "";
+            this.updateBotMessage(botMessageEl, fullReply);
           } else if (payload.event === "process") {
             this.addProcessLine(payload.text || "(空过程信息)");
           } else if (payload.event === "done") {
@@ -451,32 +454,28 @@ class ChatApp {
   addBotMessage(content) {
     const messageDiv = document.createElement("div");
     messageDiv.className = "message bot-message";
-    let formattedContent = this.escapeHtml(content);
-    formattedContent = formattedContent.replace(
-      /```([\s\S]*?)```/g,
-      "<pre><code>$1</code></pre>",
-    );
 
-    messageDiv.innerHTML =
-      '<div class="message-content"><p>' +
-      formattedContent +
-      "</p></div>" +
-      `<div class="message-time">${this.formatNow()}</div>`;
+    const contentWrap = document.createElement("div");
+    contentWrap.className = "message-content";
+    const p = document.createElement("p");
+    p.textContent = content;
+    contentWrap.appendChild(p);
+
+    const time = document.createElement("div");
+    time.className = "message-time";
+    time.textContent = this.formatNow();
+
+    messageDiv.appendChild(contentWrap);
+    messageDiv.appendChild(time);
     this.chatMessages.appendChild(messageDiv);
     this.scrollToBottom();
     return messageDiv;
   }
 
   updateBotMessage(messageDiv, content) {
-    let formattedContent = this.escapeHtml(content);
-    formattedContent = formattedContent.replace(
-      /```([\s\S]*?)```/g,
-      "<pre><code>$1</code></pre>",
-    );
-
     const p = messageDiv.querySelector(".message-content p");
     if (p) {
-      p.innerHTML = formattedContent;
+      p.textContent = content;
     }
     this.scrollToBottom();
   }

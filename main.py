@@ -1,20 +1,27 @@
 import json
 import os
-import shutil
+import re
+import threading
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterator
+from typing import Any, AsyncIterator
 
 import uvicorn
 from deepagents import create_deep_agent
-from deepagents.backends import FilesystemBackend
+from deepagents.backends import (CompositeBackend, FilesystemBackend,
+                                 StateBackend, StoreBackend)
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.store.memory import InMemoryStore
 from pydantic import BaseModel, Field
+
+from src.output_sanitize_config import load_output_sanitize_config
+from src.prompt_config import PromptConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
@@ -23,8 +30,26 @@ DAILY_DIR = MEMORIES_DIR / "daily"
 LONG_TERM_FILE = MEMORIES_DIR / "MEMORY.md"
 
 load_dotenv()
+PROMPTS = PromptConfig(PROJECT_ROOT)
+OUTPUT_SANITIZE_CONFIG = load_output_sanitize_config(
+    PROJECT_ROOT / "config" / "output_sanitize.yaml"
+)
 
-model_name = os.getenv("OPENROUTER_MODEL", "z-ai/glm-4.5-flash")
+model_name = PROMPTS.get_model_name("main")
+memory_model_name = PROMPTS.get_model_name("memory_agent")
+MEMORY_WRITE_LOCK = threading.Lock()
+
+
+def _env_flag(name: str, default: bool = True) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+MEMORY_AGENT_ENABLED = _env_flag("MEMORY_AGENT_ENABLED", default=True)
+OUTPUT_SANITIZE_ENABLED = _env_flag("OUTPUT_SANITIZE_ENABLED", default=True)
+CHECKPOINTER = MemorySaver()
 
 
 def _ensure_memory_files(today: date) -> tuple[str, str]:
@@ -56,7 +81,10 @@ def _ensure_memory_files(today: date) -> tuple[str, str]:
             encoding="utf-8",
         )
 
-    return "/memories/MEMORY.md", f"/memories/daily/{today_name}.md"
+    return (
+        PROJECT_ROOT / "memories/MEMORY.md",
+        PROJECT_ROOT / f"memories/daily/{today_name}.md",
+    )
 
 
 def build_agent() -> Any:
@@ -72,75 +100,42 @@ def build_agent() -> Any:
         # temperature=0.2,
     )
 
-    external_skills_dir = Path.home() / ".deepagents" / "agent" / "skills"
     skills_dir = PROJECT_ROOT / "skills"
-    _sync_skills_to_project(external_skills_dir, skills_dir)
     today = date.today()
     yesterday = today - timedelta(days=1)
     long_term_path, today_path = _ensure_memory_files(today)
-    yesterday_path = f"/memories/daily/{yesterday.strftime('%Y-%m-%d')}.md"
-
-    system_prompt = (
-        "你是一个通用 DeepAgent。你需要使用双层记忆系统，并把记忆写入本地 Markdown 文件。\n\n"
-        "记忆目录结构：\n"
-        "- 长期记忆：/memories/MEMORY.md\n"
-        "- 每日日志：/memories/daily/YYYY-MM-DD.md\n\n"
-        # "每次新会话开始时请先主动回忆：\n"
-        # f"1) read_file {long_term_path}\n"
-        # f"2) read_file {today_path}\n"
-        f"3) 如果存在，再 read_file {yesterday_path}\n\n"
-        "写入规范（参考双层记忆）：\n"
-        "A. 每日日志（短期记忆）\n"
-        "- 仅追加写入到当天文件 /memories/daily/YYYY-MM-DD.md。\n"
-        "- 使用格式：\n"
-        "  ## HH:MM - 事件标题\n"
-        "  - 事实/结论1\n"
-        "  - 事实/结论2\n"
-        "- 适合记录：会话过程、临时上下文、待办进展、当天细节。\n\n"
-        "B. 长期记忆\n"
-        "- 维护 /memories/MEMORY.md 的结构化内容，优先保持以下章节：\n"
-        "  ## 用户偏好\n"
-        "  ## 重要决策\n"
-        "  ## 关键联系人\n"
-        "  ## 项目事实\n"
-        "- 适合记录：跨天仍有效的信息（稳定偏好、关键决策、固定事实）。\n"
-        "- 写入时去重、合并相同信息，避免重复条目。\n\n"
-        "执行原则：\n"
-        "- 当用户明确说‘记住这个’或出现重要信息时，优先写每日日志，并在必要时同步更新长期记忆。\n"
-        "- 如果信息不确定，请标注‘待确认’，不要把猜测写成事实。\n"
-        "- 回答用户问题时可结合记忆文件，但输出给用户时保持简洁准确。\n"
+    yesterday_path = (
+        PROJECT_ROOT / f"memories/daily/{yesterday.strftime('%Y-%m-%d')}.md"
     )
+
+    system_prompt = PROMPTS.render_prompt(
+        "main_system",
+        {
+            "long_term_path": str(long_term_path),
+            "today_path": str(today_path),
+            "yesterday_path": str(yesterday_path),
+        },
+    )
+
+    def _make_backend(runtime):
+        return CompositeBackend(
+            default=StateBackend(runtime),  # Ephemeral storage
+            routes={
+                "/memories/": FilesystemBackend(root_dir=str(MEMORIES_DIR)),
+                "/skills/": FilesystemBackend(root_dir=str(PROJECT_ROOT)),
+            },  # Persistent storage
+        )
 
     agent = create_deep_agent(
         model=llm,
-        backend=FilesystemBackend(root_dir=str(PROJECT_ROOT), virtual_mode=True),
+        store=InMemoryStore(),
+        backend=FilesystemBackend(root_dir=str(PROJECT_ROOT)),
         skills=[str(skills_dir)],
-        memory=[long_term_path, today_path],
+        memory=[str(long_term_path), str(today_path), str(yesterday_path)],
+        checkpointer=CHECKPOINTER,
         system_prompt=system_prompt,
     )
     return agent
-
-
-def _sync_skills_to_project(source_dir: Path, target_dir: Path) -> None:
-    target_dir.mkdir(parents=True, exist_ok=True)
-    if not source_dir.exists():
-        return
-
-    for root, dirs, files in os.walk(source_dir):
-        rel_root = Path(root).relative_to(source_dir)
-
-        dirs[:] = [d for d in dirs if d != "__pycache__"]
-        if any(part == "__pycache__" for part in rel_root.parts):
-            continue
-
-        for file_name in files:
-            src = Path(root) / file_name
-            if src.suffix == ".pyc":
-                continue
-
-            dst = target_dir / rel_root / file_name
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
 
 
 def _list_skill_packages(skills_dir: Path) -> list[dict[str, str]]:
@@ -228,6 +223,7 @@ def _memories_payload() -> dict[str, Any]:
 
 
 AGENT: Any | None = None
+MEMORY_AGENT: Any | None = None
 
 
 def get_agent() -> Any:
@@ -235,6 +231,224 @@ def get_agent() -> Any:
     if AGENT is None:
         AGENT = build_agent()
     return AGENT
+
+
+def build_memory_agent() -> Any:
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is missing. Please set it in .env")
+
+    os.environ["OPENAI_API_KEY"] = api_key
+    llm = ChatOpenAI(
+        model=memory_model_name,
+        base_url="https://openrouter.ai/api/v1",
+        temperature=0.1,
+    )
+
+    system_prompt = PROMPTS.render_prompt("memory_agent")
+    agent = create_deep_agent(
+        model=llm,
+        backend=FilesystemBackend(root_dir=str(PROJECT_ROOT), virtual_mode=True),
+        system_prompt=system_prompt,
+    )
+    return agent
+
+
+def get_memory_agent() -> Any:
+    global MEMORY_AGENT
+    if MEMORY_AGENT is None:
+        MEMORY_AGENT = build_memory_agent()
+    return MEMORY_AGENT
+
+
+def _now_hhmm() -> str:
+    return datetime.now().strftime("%H:%M")
+
+
+def _append_daily_memory(title: str, bullets: list[str], today_path: Path) -> None:
+    cleaned_title = title.strip() or "会话记录"
+    cleaned_bullets = [x.strip() for x in bullets if x and x.strip()]
+    if not cleaned_bullets:
+        return
+
+    block_lines = [f"## {_now_hhmm()} - {cleaned_title}"]
+    for line in cleaned_bullets:
+        block_lines.append(f"- {line}")
+    block = "\n" + "\n".join(block_lines) + "\n"
+
+    current = _read_text_file(today_path)
+    today_path.write_text(current + block, encoding="utf-8")
+
+
+def _parse_long_term_sections(content: str) -> dict[str, list[str]]:
+    section_names = ["用户偏好", "重要决策", "关键联系人", "项目事实"]
+    sections: dict[str, list[str]] = {name: [] for name in section_names}
+    current_section = ""
+
+    for raw in content.splitlines():
+        line = raw.strip()
+        if line.startswith("## "):
+            name = line[3:].strip()
+            current_section = name if name in sections else ""
+            continue
+        if current_section and line.startswith("-"):
+            item = line[1:].strip()
+            if item and item != "暂无":
+                sections[current_section].append(item)
+
+    return sections
+
+
+def _render_long_term_sections(sections: dict[str, list[str]]) -> str:
+    ordered_names = ["用户偏好", "重要决策", "关键联系人", "项目事实"]
+    lines = ["# 长期记忆", ""]
+    for name in ordered_names:
+        lines.append(f"## {name}")
+        items = []
+        seen: set[str] = set()
+        for text in sections.get(name, []):
+            normalized = text.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            items.append(normalized)
+        if not items:
+            lines.append("- 暂无")
+        else:
+            for item in items:
+                lines.append(f"- {item}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _merge_long_term_memory(
+    updates: dict[str, list[str]], long_term_path: Path
+) -> None:
+    current = _read_text_file(long_term_path)
+    sections = _parse_long_term_sections(current)
+
+    for key, values in updates.items():
+        if key not in sections or not isinstance(values, list):
+            continue
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                sections[key].append(value.strip())
+
+    long_term_path.write_text(_render_long_term_sections(sections), encoding="utf-8")
+
+
+def _safe_json_loads(text: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(text)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _strip_markdown_syntax(text: str) -> str:
+    if not text:
+        return ""
+
+    value = text
+    value = re.sub(r"```[\w-]*\n?", "", value)
+    value = value.replace("```", "")
+    value = re.sub(r"`([^`]+)`", r"\1", value)
+    value = re.sub(r"\*\*([^*]+)\*\*", r"\1", value)
+    value = re.sub(r"==([^=]+)==", r"\1", value)
+    return value
+
+
+def _is_internal_leak_line(line: str) -> bool:
+    if not OUTPUT_SANITIZE_ENABLED or not OUTPUT_SANITIZE_CONFIG.enabled:
+        return False
+
+    s = line.strip()
+    if not s:
+        return False
+
+    if any(token in s for token in OUTPUT_SANITIZE_CONFIG.literals):
+        return True
+
+    return any(pattern.search(s) for pattern in OUTPUT_SANITIZE_CONFIG.regex_patterns)
+
+
+def _sanitize_user_facing_text(text: str) -> str:
+    raw = _strip_markdown_syntax(text)
+    lines = raw.splitlines()
+    kept = [line for line in lines if not _is_internal_leak_line(line)]
+    cleaned = "\n".join(kept).strip()
+    return cleaned
+
+
+def _consume_stream_buffer(buffer: str) -> tuple[str, str]:
+    if "\n" not in buffer:
+        return "", buffer
+
+    parts = buffer.split("\n")
+    remain = parts.pop() if parts else ""
+    output_parts: list[str] = []
+    for raw_line in parts:
+        clean_line = _strip_markdown_syntax(raw_line)
+        if _is_internal_leak_line(clean_line):
+            continue
+        output_parts.append(clean_line)
+
+    flushed = "\n".join(output_parts)
+    if flushed:
+        flushed += "\n"
+    return flushed, remain
+
+
+def _run_memory_agent_sync(user_message: str, assistant_message: str) -> None:
+    if not user_message.strip() or not assistant_message.strip():
+        return
+
+    with MEMORY_WRITE_LOCK:
+        today = date.today()
+        _, today_virtual_path = _ensure_memory_files(today)
+        today_path = PROJECT_ROOT / today_virtual_path.lstrip("/")
+        yesterday = today - timedelta(days=1)
+        yesterday_virtual_path = f"/memories/daily/{yesterday.strftime('%Y-%m-%d')}.md"
+        yesterday_path = PROJECT_ROOT / yesterday_virtual_path.lstrip("/")
+
+        long_term_path = LONG_TERM_FILE
+        today_log_content = _read_text_file(today_path)
+        yesterday_log_content = _read_text_file(yesterday_path)
+        long_term_content = _read_text_file(long_term_path)
+
+        memory_task = (
+            "请基于以下本轮会话更新记忆文件，并直接使用文件工具落盘。\n\n"
+            f"用户消息:\n{user_message}\n\n"
+            f"助手回复:\n{assistant_message}\n\n"
+            f"今日日志路径: {today_virtual_path}\n"
+            f"昨日日志路径: {yesterday_virtual_path}\n"
+            "长期记忆路径: /memories/MEMORY.md\n\n"
+            "今天日志当前内容:\n"
+            f"{today_log_content or '(空)'}\n\n"
+            "昨天日志当前内容:\n"
+            f"{yesterday_log_content or '(空)'}\n\n"
+            "长期记忆当前内容:\n"
+            f"{long_term_content or '(空)'}\n"
+        )
+
+        get_memory_agent().invoke(
+            {"messages": [{"role": "user", "content": memory_task}]},
+            config={
+                "configurable": {"thread_id": f"memory-{today.strftime('%Y-%m-%d')}"}
+            },
+        )
+
+
+def _dispatch_memory_agent(user_message: str, assistant_message: str) -> None:
+    if not MEMORY_AGENT_ENABLED:
+        return
+
+    worker = threading.Thread(
+        target=_run_memory_agent_sync,
+        args=(user_message, assistant_message),
+        daemon=True,
+    )
+    worker.start()
 
 
 def _to_deepagent_messages(history: list[Any], user_text: str) -> list[dict[str, str]]:
@@ -262,10 +476,10 @@ def chat_with_agent(
     message: str, history: list[Any], thread_id: str | None
 ) -> tuple[str, str, list[dict[str, str]]]:
     resolved_thread_id = thread_id or str(uuid.uuid4())
-    normalized_messages = _to_deepagent_messages(history, message)
+    input_messages = [{"role": "user", "content": message}]
 
     result = get_agent().invoke(
-        {"messages": normalized_messages},
+        {"messages": input_messages},
         config={"configurable": {"thread_id": resolved_thread_id}},
     )
 
@@ -275,8 +489,11 @@ def chat_with_agent(
             assistant_text = _message_content_to_text(_get_msg_content(msg))
             break
 
-    updated_history = list(normalized_messages)
+    assistant_text = _sanitize_user_facing_text(assistant_text)
+
+    updated_history = _to_deepagent_messages(history, message)
     updated_history.append({"role": "assistant", "content": assistant_text})
+    _dispatch_memory_agent(user_message=message, assistant_message=assistant_text)
     return assistant_text, resolved_thread_id, updated_history
 
 
@@ -464,18 +681,19 @@ async def stream_chat_with_agent(
     message: str, history: list[Any], thread_id: str | None
 ) -> AsyncIterator[dict[str, Any]]:
     resolved_thread_id = thread_id or str(uuid.uuid4())
-    normalized_messages = _to_deepagent_messages(history, message)
+    input_messages = [{"role": "user", "content": message}]
 
     assistant_full_text = ""
     started_nodes: set[str] = set()
     completed_nodes: set[str] = set()
     fallback_ai_text = ""
+    stream_buffer = ""
 
     yield {"event": "start", "thread_id": resolved_thread_id}
 
     try:
         event_iter = get_agent().astream_events(
-            {"messages": normalized_messages},
+            {"messages": input_messages},
             config={"configurable": {"thread_id": resolved_thread_id}},
             version="v2",
         )
@@ -493,8 +711,11 @@ async def stream_chat_with_agent(
                 chunk = data.get("chunk")
                 delta = _extract_event_chunk_text(chunk)
                 if delta:
-                    assistant_full_text += delta
-                    yield {"event": "delta", "text": delta}
+                    stream_buffer += delta
+                    flushed, stream_buffer = _consume_stream_buffer(stream_buffer)
+                    if flushed:
+                        assistant_full_text += flushed
+                        yield {"event": "delta", "text": flushed}
                 continue
 
             if kind == "on_chain_start":
@@ -547,12 +768,22 @@ async def stream_chat_with_agent(
         else:
             yield {"event": "error", "detail": f"stream failed: {exc}"}
 
-    if not assistant_full_text and fallback_ai_text:
-        assistant_full_text = fallback_ai_text
-        yield {"event": "delta", "text": assistant_full_text}
+    if stream_buffer:
+        tail = _strip_markdown_syntax(stream_buffer)
+        if not _is_internal_leak_line(tail):
+            assistant_full_text += tail
+            yield {"event": "delta", "text": tail}
 
-    updated_history = list(normalized_messages)
+    if not assistant_full_text and fallback_ai_text:
+        assistant_full_text = _sanitize_user_facing_text(fallback_ai_text)
+        if assistant_full_text:
+            yield {"event": "delta", "text": assistant_full_text}
+
+    assistant_full_text = _sanitize_user_facing_text(assistant_full_text)
+
+    updated_history = _to_deepagent_messages(history, message)
     updated_history.append({"role": "assistant", "content": assistant_full_text})
+    _dispatch_memory_agent(user_message=message, assistant_message=assistant_full_text)
     yield {
         "event": "done",
         "reply": assistant_full_text,

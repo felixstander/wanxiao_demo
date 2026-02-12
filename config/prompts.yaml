@@ -1,0 +1,16 @@
+prompts:
+  main_system:
+    files:
+      - prompts/main_system/SOUL.md
+      - prompts/main_system/INDENTITY.md
+      - prompts/main_system/MEMORY.md
+  memory_agent:
+    file: prompts/memory_agent.md
+
+models:
+  main:
+    env: OPENROUTER_MODEL
+    default: z-ai/glm-4.7-flash
+  memory_agent:
+    env: OPENROUTER_MEMORY_MODEL
+    default: z-ai/glm-4.7-flash

@@ -39,6 +39,9 @@ cp .env.example .env
 ```env
 OPENROUTER_API_KEY="your-openrouter-key"
 OPENROUTER_MODEL="z-ai/glm-4.5-flash"
+OPENROUTER_MEMORY_MODEL="z-ai/glm-4.7-flash"
+MEMORY_AGENT_ENABLED="1"
+OUTPUT_SANITIZE_ENABLED="1"
 ```
 
 ## 启动项目
@@ -109,6 +112,40 @@ memories/
 1. 会话开始时读取长期记忆与最近日记。
 2. 将短期信息按 `## HH:MM - 标题` 写入当日日志。
 3. 将跨天稳定信息去重后沉淀到 `MEMORY.md`。
+
+## Prompt 配置化
+
+- 所有主/子 Agent 提示词已从 `main.py` 抽离到配置与模板文件：
+
+```text
+config/prompts.yaml
+prompts/main_system/SOUL.md
+prompts/main_system/INDENTITY.md
+prompts/main_system/MEMORY.md
+prompts/memory_agent.md
+```
+
+- `config/prompts.yaml` 负责：
+  - prompt 文件路由
+  - 主模型与 memory_agent 模型配置（含 env 键与默认值）
+
+## Memory Agent（异步记忆提炼）
+
+- 新增 `memory_agent` 子 Agent：每轮用户-助手对话结束后异步执行，不阻塞主回复。
+- 模型默认使用 `z-ai/glm-4.7-flash`（可通过 `OPENROUTER_MEMORY_MODEL` 覆盖）。
+- 输出为结构化 JSON，自动落盘到：
+  - 每日短期记忆：`memories/daily/YYYY-MM-DD.md`
+  - 长期记忆：`memories/MEMORY.md`
+- 可通过 `MEMORY_AGENT_ENABLED=0` 关闭该异步记忆提炼流程。
+
+## 输出净化规则配置
+
+- 配置文件：`config/output_sanitize.yaml`
+- 可配置项：
+  - `enabled`：是否启用净化
+  - `literals`：命中即过滤的关键词
+  - `regex`：正则过滤规则
+- 运行时总开关：`OUTPUT_SANITIZE_ENABLED=0/1`
 
 ## Milvus Lite 记忆检索脚本
 
