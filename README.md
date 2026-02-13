@@ -1,10 +1,10 @@
 # TODO LIST
 
-1. - [] skills 仍未成功加载
-2. - [] 记忆模块完善
-    1. - [] Milvus Lite 记忆检索脚本尝试
-    2. - [] 记忆子Agent从主 Agent解耦出来
-    3. - [] 画记忆模块的架构图
+1. - [ ] skills 仍未成功加载
+2. - [ ] 记忆模块完善
+    1. - [ ] Milvus Lite 记忆检索脚本尝试
+    2. - [x] 记忆子Agent从主 Agent解耦出来
+    3. - [ ] 画记忆模块的架构图
 
 
 # DeepAgents + OpenRouter + 原生前端 Demo
