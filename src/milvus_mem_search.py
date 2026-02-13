@@ -297,7 +297,9 @@ def build_default_store() -> MilvusMemSearch:
     root = _project_root()
     memory_daily_dir = root / "memories" / "daily"
     milvus_db_path = root / ".memories" / "milvus_memories.db"
-    return MilvusMemSearch(memory_daily_dir=memory_daily_dir, milvus_db_path=milvus_db_path)
+    return MilvusMemSearch(
+        memory_daily_dir=memory_daily_dir, milvus_db_path=milvus_db_path
+    )
 
 
 def main() -> None:
@@ -307,7 +309,9 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("index", help="Index all daily memory markdown files")
-    sub.add_parser("rebuild", help="Drop collection and rebuild from all markdown files")
+    sub.add_parser(
+        "rebuild", help="Drop collection and rebuild from all markdown files"
+    )
     sub.add_parser("stats", help="Show collection and index stats")
 
     search_parser = sub.add_parser("search", help="Search indexed daily memory chunks")
