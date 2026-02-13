@@ -5,7 +5,7 @@
     1. - [ ] Milvus Lite 记忆检索脚本尝试
     2. - [x] 记忆子Agent从主 Agent解耦出来
     3. - [ ] 画记忆模块的架构图
-    4. - [ ] 长期记忆的提示词需要进行结构，要记录的内容现在太杂太多，应该解耦成用户偏好/代理人偏好/已咨询保险等
+    4. - [ ] 长期记忆的提示词需要进行解耦，要记录的内容现在太杂太多，应该解耦成用户偏好/代理人偏好/已咨询保险等
 
 
 # DeepAgents + OpenRouter + 原生前端 Demo
@@ -13,7 +13,7 @@
 ## 功能说明
 
 - 使用 LangChain DeepAgents（`create_deep_agent`）作为核心 Agent 运行时。
-- 通过 `langchain-openai` 接入 OpenRouter 模型（默认 `z-ai/glm-4.5-flash`）。
+- 通过 `langchain-openai` 接入 OpenRouter 模型（默认 `z-ai/glm-4.7-flash`）。
 - 从 `~/.deepagents/agent/skills` 加载技能文件，并映射到 `/skills/*`。
 - 使用本地文件系统后端，记忆数据存储在项目内的 `memories/` 目录。
 - 前端使用原生 `HTML + CSS + JavaScript`。
