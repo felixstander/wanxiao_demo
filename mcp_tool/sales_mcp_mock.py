@@ -1,131 +1,654 @@
-from mcp.server.fastmcp import FastMCP
-from pydantic import BaseModel, Field
-from typing import List, Dict
+from datetime import date
+from typing import Any
 
-# 初始化 MCP 服务器
+from mcp.server.fastmcp import FastMCP
+
+
 mcp = FastMCP("SalesScenarioMockTools")
 
-# ==========================================
-# Mock 数据区
-# ==========================================
 
-# 1. 客户特征与意愿映射 Mock 数据
-MOCK_CUSTOMER_DB = {
+CUSTOMER_DB: dict[str, dict[str, Any]] = {
     "张三": {
         "age": 35,
-        "behavior": "多次查看出单链接",
-        "intent_level": "高意向",
-        "scene_type": "简单场景",
-        "tag": "价格敏感型",
+        "gender": "男",
+        "behaviors": ["多次查看出单链接", "查看重疾产品详情", "咨询报销范围"],
+        "viewed_issue_link_count": 5,
+        "viewed_products": ["守护重疾Pro", "全家医疗Plus", "安心意外Max"],
+        "consulted_products": ["守护重疾Pro", "全家医疗Plus"],
+        "claim_count": 1,
+        "reimbursed_diseases": ["甲状腺结节"],
+        "family_structure": "已婚一孩",
+        "annual_income": 280000,
+        "city": "上海",
+        "birthday": "03-18",
     },
     "李四": {
         "age": 42,
-        "behavior": "浏览了产品对比页但未点击购买",
-        "intent_level": "中意向",
-        "scene_type": "需要培育",
-        "tag": "注重保障全面性",
+        "gender": "女",
+        "behaviors": ["浏览产品对比页", "多次查看理赔案例", "未点击立即购买"],
+        "viewed_issue_link_count": 2,
+        "viewed_products": ["臻选医疗VIP", "守护重疾Pro"],
+        "consulted_products": ["臻选医疗VIP"],
+        "claim_count": 2,
+        "reimbursed_diseases": ["乳腺结节", "胆囊炎"],
+        "family_structure": "已婚二孩",
+        "annual_income": 360000,
+        "city": "杭州",
+        "birthday": "10-06",
     },
     "王五": {
         "age": 28,
-        "behavior": "第一次点击咨询，询问基础概念",
-        "intent_level": "低意向",
-        "scene_type": "复杂场景",
-        "tag": "小白客户",
+        "gender": "男",
+        "behaviors": ["第一次点击咨询", "询问基础概念", "收藏了保险科普海报"],
+        "viewed_issue_link_count": 0,
+        "viewed_products": ["轻松医疗基础版"],
+        "consulted_products": ["轻松医疗基础版"],
+        "claim_count": 0,
+        "reimbursed_diseases": [],
+        "family_structure": "单身",
+        "annual_income": 140000,
+        "city": "南京",
+        "birthday": "12-24",
     },
 }
 
-# ==========================================
-# 工具定义区 (MCP Tools)
-# ==========================================
+
+PRODUCT_CATALOG: dict[str, dict[str, Any]] = {
+    "守护重疾Pro": {
+        "type": "重疾险",
+        "price_band": "中高",
+        "annual_base_premium": 2200,
+        "coverage_scope": ["恶性肿瘤", "心脑血管重疾", "器官功能障碍"],
+        "coverage_limit": "50万-80万",
+        "waiting_period": "90天",
+        "highlights": ["重疾多次赔", "特定疾病额外赔付"],
+        "limitations": ["既往重大疾病除外", "等待期内不赔"],
+    },
+    "全家医疗Plus": {
+        "type": "医疗险",
+        "price_band": "中",
+        "annual_base_premium": 1600,
+        "coverage_scope": ["住院医疗", "门诊手术", "重大疾病住院"],
+        "coverage_limit": "300万",
+        "waiting_period": "30天",
+        "highlights": ["可附加家庭共保", "特药直付"],
+        "limitations": ["部分慢病免责", "特需部需附加"],
+    },
+    "安心意外Max": {
+        "type": "意外险",
+        "price_band": "低",
+        "annual_base_premium": 680,
+        "coverage_scope": ["交通意外", "意外医疗", "伤残保障"],
+        "coverage_limit": "100万",
+        "waiting_period": "次日生效",
+        "highlights": ["交通意外高额赔", "含意外住院津贴"],
+        "limitations": ["高危运动部分免责"],
+    },
+    "臻选医疗VIP": {
+        "type": "高端医疗险",
+        "price_band": "高",
+        "annual_base_premium": 3800,
+        "coverage_scope": ["全球医疗网络", "先进疗法", "重大疾病二诊"],
+        "coverage_limit": "800万",
+        "waiting_period": "30天",
+        "highlights": ["公立特需可报", "国际就医支持"],
+        "limitations": ["首年已有疾病责任受限"],
+    },
+    "轻松医疗基础版": {
+        "type": "医疗险",
+        "price_band": "低",
+        "annual_base_premium": 980,
+        "coverage_scope": ["住院医疗", "重大疾病住院"],
+        "coverage_limit": "200万",
+        "waiting_period": "30天",
+        "highlights": ["保费友好", "投保门槛低"],
+        "limitations": ["报销范围较基础"],
+    },
+}
+
+
+CLAIM_CASE_DB: list[dict[str, Any]] = [
+    {
+        "case_id": "CASE-001",
+        "disease": "乳腺结节",
+        "age_min": 35,
+        "age_max": 50,
+        "product": "守护重疾Pro",
+        "claim_amount": 320000,
+        "approval_days": 5,
+        "key_point": "体检发现后尽快规范复查，按条款完成材料提交",
+    },
+    {
+        "case_id": "CASE-002",
+        "disease": "甲状腺结节",
+        "age_min": 25,
+        "age_max": 45,
+        "product": "全家医疗Plus",
+        "claim_amount": 86000,
+        "approval_days": 3,
+        "key_point": "门诊+住院链路齐全，报销比例高",
+    },
+    {
+        "case_id": "CASE-003",
+        "disease": "心脑血管疾病",
+        "age_min": 35,
+        "age_max": 60,
+        "product": "守护重疾Pro",
+        "claim_amount": 500000,
+        "approval_days": 7,
+        "key_point": "符合重疾定义后快速给付，缓解治疗现金压力",
+    },
+]
+
+
+FESTIVAL_CALENDAR: list[dict[str, Any]] = [
+    {"name": "清明", "month": 4, "day": 4, "travel_risk": "短途自驾增多"},
+    {"name": "劳动节", "month": 5, "day": 1, "travel_risk": "景区拥挤+交通高峰"},
+    {"name": "端午", "month": 6, "day": 10, "travel_risk": "周边游和水上活动增加"},
+    {"name": "中秋", "month": 9, "day": 17, "travel_risk": "返乡车流集中"},
+    {"name": "国庆", "month": 10, "day": 1, "travel_risk": "跨省出行高峰"},
+]
+
+
+CITY_CARE_HINTS: dict[str, str] = {
+    "上海": "近期昼夜温差较大，注意呼吸道与慢病管理",
+    "杭州": "梅雨季节注意出行路滑和车险联动保障",
+    "南京": "换季过敏高发，建议关注门急诊和住院保障",
+}
+
+
+def _behavior_score(behaviors: list[str], viewed_issue_link_count: int) -> int:
+    score = 0
+    behavior_text = "|".join(behaviors)
+    if "多次查看出单链接" in behavior_text:
+        score += 45
+    if "浏览产品对比页" in behavior_text:
+        score += 20
+    if "理赔案例" in behavior_text:
+        score += 15
+    if "第一次点击咨询" in behavior_text or "询问基础概念" in behavior_text:
+        score += 8
+    score += min(viewed_issue_link_count * 8, 24)
+    return score
+
+
+def _intent_level_from_score(score: int) -> str:
+    if score >= 70:
+        return "高意向"
+    if score >= 40:
+        return "中意向"
+    return "低意向"
+
+
+def _resolve_customer(name: str) -> dict[str, Any] | None:
+    return CUSTOMER_DB.get(name)
+
+
+def _disease_risk_factor(diseases: list[str]) -> float:
+    high_risk = {"恶性肿瘤", "心脑血管疾病", "慢性肾病"}
+    mid_risk = {"乳腺结节", "甲状腺结节", "高血压", "糖尿病"}
+    factor = 1.0
+    for disease in diseases:
+        if disease in high_risk:
+            factor += 0.12
+        elif disease in mid_risk:
+            factor += 0.06
+        else:
+            factor += 0.03
+    return min(factor, 1.55)
+
+
+def _age_factor(age: int) -> float:
+    if age < 30:
+        return 0.88
+    if age < 40:
+        return 1.0
+    if age < 50:
+        return 1.22
+    return 1.48
+
+
+def _gender_factor(gender: str) -> float:
+    return 1.08 if gender == "男" else 1.0
+
+
+def _intent_adjustment(intent_level: str) -> float:
+    if intent_level == "高意向":
+        return 0.96
+    if intent_level == "低意向":
+        return 1.05
+    return 1.0
+
+
+def _recommend_products_by_age(age: int) -> list[str]:
+    if age < 30:
+        return ["轻松医疗基础版", "安心意外Max"]
+    if age < 40:
+        return ["全家医疗Plus", "守护重疾Pro"]
+    return ["守护重疾Pro", "臻选医疗VIP"]
+
+
+def _nearest_festival(today: date) -> dict[str, Any]:
+    current_year = today.year
+    candidates: list[tuple[int, dict[str, Any]]] = []
+    for item in FESTIVAL_CALENDAR:
+        festival_date = date(current_year, item["month"], item["day"])
+        if festival_date < today:
+            festival_date = date(current_year + 1, item["month"], item["day"])
+        diff_days = (festival_date - today).days
+        candidates.append((diff_days, item))
+    candidates.sort(key=lambda x: x[0])
+    return candidates[0][1]
 
 
 @mcp.tool()
-def intelligent_judgment(customer_name: str) -> dict:
-    """
-    1. 智能判断工具：根据客户姓名，映射并返回客户的意愿和特征。
-    """
-    if customer_name in MOCK_CUSTOMER_DB:
-        customer_info = MOCK_CUSTOMER_DB[customer_name]
+def intelligent_judgment(
+    customer_name: str,
+    age: int | None = None,
+    behavior: str | None = None,
+    viewed_issue_link_count: int | None = None,
+) -> dict[str, Any]:
+    customer = _resolve_customer(customer_name)
+    if customer is None and (age is None or behavior is None):
         return {
-            "status": "success",
-            "message": f"成功匹配客户：{customer_name}",
-            "data": customer_info,
+            "status": "error",
+            "message": "未找到客户，且缺少 age/behavior 入参，无法进行意愿判断",
+            "data": None,
         }
-    return {"status": "error", "message": "未找到该客户的特征数据", "data": None}
+
+    if customer is None:
+        behaviors = [behavior] if behavior else []
+        viewed_count = viewed_issue_link_count or 0
+        inferred_age = age or 30
+    else:
+        behaviors = list(customer["behaviors"])
+        if behavior:
+            behaviors.append(behavior)
+        viewed_count = (
+            viewed_issue_link_count
+            if viewed_issue_link_count is not None
+            else customer["viewed_issue_link_count"]
+        )
+        inferred_age = age if age is not None else customer["age"]
+
+    score = _behavior_score(behaviors, viewed_count)
+    if inferred_age >= 40:
+        score += 6
+
+    intent_level = _intent_level_from_score(score)
+    scene_type = (
+        "简单场景"
+        if intent_level == "高意向"
+        else ("需要培育" if intent_level == "中意向" else "深度引导")
+    )
+
+    next_tool = {
+        "高意向": "issue_policy_tool",
+        "中意向": "product_comparison_tool",
+        "低意向": "product_knowledge_share_tool",
+    }[intent_level]
+
+    return {
+        "status": "success",
+        "message": f"已完成客户 {customer_name} 的意愿判断",
+        "data": {
+            "customer_name": customer_name,
+            "age": inferred_age,
+            "behaviors": behaviors,
+            "viewed_issue_link_count": viewed_count,
+            "intent_score": score,
+            "intent_level": intent_level,
+            "scene_type": scene_type,
+            "next_recommended_tool": next_tool,
+        },
+    }
 
 
 @mcp.tool()
-def issue_policy_tool(customer_name: str, age: int, intent_level: str) -> dict:
-    """
-    2. 出单工具：输入客户信息，带出报价页面配置。
-    """
-    # Mock 报价数据
-    base_price = 300 if age < 30 else (500 if age < 40 else 800)
+def issue_policy_tool(
+    customer_name: str,
+    age: int,
+    gender: str,
+    claim_count: int,
+    reimbursed_diseases: list[str],
+) -> dict[str, Any]:
+    if gender not in {"男", "女"}:
+        return {
+            "status": "error",
+            "message": "gender 仅支持 '男' 或 '女'",
+            "data": None,
+        }
+
+    judgment = intelligent_judgment(customer_name)
+    intent_level = "中意向"
+    if judgment["status"] == "success":
+        intent_level = judgment["data"]["intent_level"]
+
+    base_premium = 1200
+    age_factor = _age_factor(age)
+    gender_factor = _gender_factor(gender)
+    claims_factor = min(1.0 + claim_count * 0.09, 1.45)
+    disease_factor = _disease_risk_factor(reimbursed_diseases)
+    intent_factor = _intent_adjustment(intent_level)
+
+    annual_premium = round(
+        base_premium
+        * age_factor
+        * gender_factor
+        * claims_factor
+        * disease_factor
+        * intent_factor,
+        2,
+    )
+
+    monthly_premium = round(annual_premium / 12, 2)
+    recommended_products = _recommend_products_by_age(age)
+    quote_products = [
+        {
+            "name": name,
+            "type": PRODUCT_CATALOG[name]["type"],
+            "coverage_limit": PRODUCT_CATALOG[name]["coverage_limit"],
+            "annual_base_premium": PRODUCT_CATALOG[name]["annual_base_premium"],
+        }
+        for name in recommended_products
+    ]
+
     return {
-        "tool_name": "直接出单工具",
+        "status": "success",
+        "tool_name": "issue_policy_tool",
         "action": "render_quote_page",
-        "page_url": f"https://mock-insurance.com/quote?user={customer_name}&price={base_price}",
-        "ui_elements": [
-            "产品方案摘要",
-            f"动态测算保费: {base_price}元",
-            "一键投保按钮",
-        ],
+        "page_url": (
+            "https://mock-insurance.com/quote"
+            f"?user={customer_name}&age={age}&gender={gender}&annual_premium={annual_premium}"
+        ),
+        "quote": {
+            "customer_name": customer_name,
+            "intent_level": intent_level,
+            "annual_premium": annual_premium,
+            "monthly_premium": monthly_premium,
+            "premium_breakdown": {
+                "base_premium": base_premium,
+                "age_factor": age_factor,
+                "gender_factor": gender_factor,
+                "claims_factor": claims_factor,
+                "disease_factor": disease_factor,
+                "intent_factor": intent_factor,
+            },
+            "input_features": {
+                "age": age,
+                "gender": gender,
+                "claim_count": claim_count,
+                "reimbursed_diseases": reimbursed_diseases,
+            },
+            "recommended_products": quote_products,
+        },
+        "ui_elements": ["产品方案摘要", "动态测算保费", "一键投保按钮", "核保须知"],
     }
 
 
 @mcp.tool()
-def nurturing_process_tools() -> dict:
-    """
-    3. 过程工具组合：返回用于中意向客户培育的三个工具组合，供前端演示替换与组合。
-    """
+def product_comparison_tool(
+    customer_name: str,
+    viewed_products: list[str] | None = None,
+) -> dict[str, Any]:
+    customer = _resolve_customer(customer_name)
+    products = viewed_products or (customer["viewed_products"] if customer else [])
+    if len(products) < 2:
+        products = ["全家医疗Plus", "守护重疾Pro"]
+
+    comparison_rows = []
+    for product_name in products:
+        detail = PRODUCT_CATALOG.get(product_name)
+        if not detail:
+            continue
+        comparison_rows.append(
+            {
+                "product": product_name,
+                "type": detail["type"],
+                "price_band": detail["price_band"],
+                "coverage_limit": detail["coverage_limit"],
+                "waiting_period": detail["waiting_period"],
+                "highlights": detail["highlights"],
+                "limitations": detail["limitations"],
+            }
+        )
+
     return {
-        "tool_name": "过程工具组合",
+        "status": "success",
+        "tool_name": "product_comparison_tool",
+        "customer_name": customer_name,
+        "comparison_table": comparison_rows,
+        "suggested_talk_track": "可先从保额和等待期解释差异，再强调理赔体验。",
+    }
+
+
+@mcp.tool()
+def claim_case_tool(
+    customer_name: str,
+    age: int,
+    reimbursed_diseases: list[str],
+) -> dict[str, Any]:
+    matched_cases: list[dict[str, Any]] = []
+    for item in CLAIM_CASE_DB:
+        disease_hit = item["disease"] in reimbursed_diseases
+        age_hit = item["age_min"] <= age <= item["age_max"]
+        if disease_hit or age_hit:
+            matched_cases.append(item)
+
+    if not matched_cases:
+        matched_cases = CLAIM_CASE_DB[:2]
+
+    output_cases = [
+        {
+            "case_id": case["case_id"],
+            "disease": case["disease"],
+            "matched_product": case["product"],
+            "claim_amount": case["claim_amount"],
+            "approval_days": case["approval_days"],
+            "key_point": case["key_point"],
+        }
+        for case in matched_cases[:3]
+    ]
+
+    return {
+        "status": "success",
+        "tool_name": "claim_case_tool",
+        "customer_name": customer_name,
+        "matched_case_count": len(output_cases),
+        "cases": output_cases,
+        "suggested_talk_track": "这些案例和您的年龄/疾病背景相近，可参考理赔速度与赔付金额。",
+    }
+
+
+@mcp.tool()
+def personal_needs_analysis_tool(
+    customer_name: str,
+    age: int,
+    annual_income: int,
+    family_structure: str,
+    existing_insurance_budget: int = 0,
+) -> dict[str, Any]:
+    gross_budget = int(annual_income * 0.1)
+    recommended_budget = max(gross_budget - existing_insurance_budget, 1200)
+    budget_monthly = round(recommended_budget / 12, 2)
+
+    has_children = "孩" in family_structure
+    has_spouse = "已婚" in family_structure
+
+    demand_focus = ["医疗保障", "重大疾病保障"]
+    if has_children:
+        demand_focus.append("家庭责任保障")
+    if age >= 40:
+        demand_focus.append("心脑血管风险保障")
+    if not has_spouse and not has_children:
+        demand_focus.append("高杠杆意外保障")
+
+    recommended_products = _recommend_products_by_age(age)
+    portfolio = [
+        {
+            "product": p,
+            "allocation_ratio": 0.5 if idx == 0 else 0.3 if idx == 1 else 0.2,
+            "estimated_budget": round(
+                recommended_budget
+                * (0.5 if idx == 0 else 0.3 if idx == 1 else 0.2),
+                2,
+            ),
+            "coverage_scope": PRODUCT_CATALOG[p]["coverage_scope"],
+        }
+        for idx, p in enumerate(recommended_products)
+    ]
+
+    return {
+        "status": "success",
+        "tool_name": "personal_needs_analysis_tool",
+        "customer_name": customer_name,
+        "analysis": {
+            "annual_income": annual_income,
+            "family_structure": family_structure,
+            "age": age,
+            "recommended_annual_budget": recommended_budget,
+            "recommended_monthly_budget": budget_monthly,
+            "demand_focus": demand_focus,
+            "recommended_portfolio": portfolio,
+        },
+    }
+
+
+@mcp.tool()
+def nurturing_process_tools(customer_name: str) -> dict[str, Any]:
+    return {
+        "status": "success",
+        "tool_name": "nurturing_process_tools",
+        "customer_name": customer_name,
         "available_tools": [
             {
-                "id": "t_compare",
+                "id": "product_comparison_tool",
                 "name": "产品对比",
-                "desc": "生成多款产品优劣势对比表格",
+                "desc": "基于客户浏览产品生成差异化对比",
             },
             {
-                "id": "t_claims",
+                "id": "claim_case_tool",
                 "name": "理赔案例",
-                "desc": "推送真实理赔成功案例，建立信任",
+                "desc": "基于年龄和疾病给出相似理赔案例",
             },
             {
-                "id": "t_needs",
+                "id": "personal_needs_analysis_tool",
                 "name": "个人客户需求分析",
-                "desc": "雷达图展示客户在重疾、医疗、意外的缺口",
+                "desc": "输出预算、险种组合、保障范围",
             },
         ],
-        "suggested_action": "display_tool_carousel",  # 建议前端以轮播或列表展示
     }
 
 
 @mcp.tool()
-def deep_guidance_tools() -> dict:
-    """
-    4. 深度引导流程工具：针对低意向/复杂场景的长线跟进工具。
-    """
+def product_knowledge_share_tool(
+    customer_name: str,
+    consulted_products: list[str] | None = None,
+) -> dict[str, Any]:
+    customer = _resolve_customer(customer_name)
+    products = consulted_products or (customer["consulted_products"] if customer else [])
+    if not products:
+        products = ["全家医疗Plus"]
+
+    knowledge_cards = []
+    for name in products:
+        item = PRODUCT_CATALOG.get(name)
+        if not item:
+            continue
+        knowledge_cards.append(
+            {
+                "product": name,
+                "insurable_diseases": item["coverage_scope"],
+                "payout_scope": item["highlights"],
+                "coverage_limit": item["coverage_limit"],
+                "easy_explain": f"{name} 适合先解决 {item['type']} 的核心保障缺口。",
+            }
+        )
+
     return {
-        "tool_name": "深度引导流程工具",
+        "status": "success",
+        "tool_name": "product_knowledge_share_tool",
+        "customer_name": customer_name,
+        "knowledge_cards": knowledge_cards,
+        "share_material": {
+            "article_title": "3分钟读懂医疗+重疾如何搭配",
+            "poster_url": "https://mock-insurance.com/materials/knowledge-poster-01.png",
+        },
+    }
+
+
+@mcp.tool()
+def agent_ai_business_card_tool(
+    agent_name: str = "金牌顾问小安",
+    specialty: str = "医疗险+重疾险组合规划",
+) -> dict[str, Any]:
+    return {
+        "status": "success",
+        "tool_name": "agent_ai_business_card_tool",
+        "card": {
+            "agent_name": agent_name,
+            "title": "家庭保障规划顾问",
+            "specialty": specialty,
+            "service_tags": ["保费优化", "家庭保障配置", "理赔协助"],
+            "share_link": "https://mock-insurance.com/agent-card/AI-001",
+            "track_code": "track_ai_card_001",
+        },
+    }
+
+
+@mcp.tool()
+def periodic_care_tool(
+    customer_name: str,
+    city: str | None = None,
+    upcoming_event: str | None = None,
+) -> dict[str, Any]:
+    customer = _resolve_customer(customer_name)
+    city_name = city or (customer["city"] if customer else "上海")
+    festival = {"name": upcoming_event} if upcoming_event else _nearest_festival(date.today())
+
+    care_hint = CITY_CARE_HINTS.get(city_name, "近期注意出行安全与天气变化，建议完善意外与医疗保障。")
+    event_name = festival["name"]
+    travel_risk = festival.get("travel_risk", "节假日出行与天气变化风险增加")
+
+    return {
+        "status": "success",
+        "tool_name": "periodic_care_tool",
+        "customer_name": customer_name,
+        "city": city_name,
+        "event": event_name,
+        "care_message": (
+            f"{event_name}将近，{care_hint}。{travel_risk}，"
+            "建议提前配置意外医疗与交通意外保障。"
+        ),
+        "linked_products": ["安心意外Max", "全家医疗Plus"],
+        "schedule_suggestion": {
+            "next_touchpoint": "3天后回访",
+            "channel": "企业微信",
+        },
+    }
+
+
+@mcp.tool()
+def deep_guidance_tools(customer_name: str) -> dict[str, Any]:
+    return {
+        "status": "success",
+        "tool_name": "deep_guidance_tools",
+        "customer_name": customer_name,
         "available_tools": [
             {
-                "id": "d_knowledge",
+                "id": "product_knowledge_share_tool",
                 "name": "产品知识分享",
-                "type": "资讯/海报",
-                "desc": "软性科普文章与早安海报",
+                "desc": "基于客户咨询过的产品输出可保疾病、赔付范围、保额科普",
             },
             {
-                "id": "d_marketing",
-                "name": "内容营销素材库",
-                "type": "代理人AI名片",
-                "desc": "带有追踪功能的专业名片分享",
+                "id": "agent_ai_business_card_tool",
+                "name": "内容营销素材库（代理人AI名片）",
+                "desc": "生成可追踪分享的代理人专业名片",
             },
             {
-                "id": "d_care",
+                "id": "periodic_care_tool",
                 "name": "定期关怀",
-                "type": "日程提醒",
-                "desc": "自动设置生日、节日问候提醒",
+                "desc": "基于节日/天气给出问候文案并关联保障卖点",
             },
         ],
     }
@@ -133,42 +656,39 @@ def deep_guidance_tools() -> dict:
 
 @mcp.tool()
 def diagnose_stuck_status(
-    current_tool_id: str, elapsed_seconds: int, customer_intent: str
-) -> dict:
-    """
-    5 & 6. 智能判断卡点工具 (作为 Skill 封装在 Tool 内)
-    根据前端触发的时间（倒计时工具产生的结果）、当前停留的工具页面、客户意愿，
-    内置逻辑判断，决定下一步推送什么话术或卡片。
-    """
-    # 逻辑 6.1：出单场景，30秒未操作
-    if current_tool_id == "issue_policy" and elapsed_seconds >= 30:
+    current_tool_id: str,
+    elapsed_seconds: int,
+    customer_intent: str,
+) -> dict[str, Any]:
+    if current_tool_id == "issue_policy_tool" and elapsed_seconds >= 30:
         return {
             "diagnosis": "出单卡顿",
             "trigger_action": "show_assist_card",
-            "message": "出单工具未操作 | 30秒 | 需要帮您解释吗？",
-            "next_step": "等待代理人点击'需要'，跳转操作指引",
+            "message": "报价页停留超过30秒，可推送保费构成解释",
+            "next_step": "调用 personal_needs_analysis_tool",
         }
 
-    # 逻辑 6.2：任意页面停留，2分钟 (120秒)
     if elapsed_seconds >= 120:
         return {
             "diagnosis": "理解困难/阅读时间过长",
             "trigger_action": "show_assist_card",
-            "message": f"页面停留过长 | {elapsed_seconds//60}分钟 | 是否遇到理解困难？",
-            "next_step": "弹出简版说明或核心卖点提炼工具",
+            "message": f"页面停留 {elapsed_seconds // 60} 分钟，建议切换简版解读",
+            "next_step": "调用 product_knowledge_share_tool",
         }
 
-    # 扩展逻辑：如果是中低意向客户，卡顿时的干预可以不同
-    if customer_intent in ["中意向", "低意向"] and elapsed_seconds >= 60:
+    if customer_intent in {"中意向", "低意向"} and elapsed_seconds >= 60:
         return {
             "diagnosis": "培育期犹豫",
             "trigger_action": "recommend_tool",
-            "message": "客户可能还在犹豫，建议发送【理赔案例】促单",
-            "next_step": "调用 nurturing_process_tools 的 t_claims",
+            "message": "客户在犹豫，优先推送理赔案例建立信任",
+            "next_step": "调用 claim_case_tool",
         }
 
-    # 未触发任何卡点
-    return {"diagnosis": "正常操作中", "trigger_action": "none", "message": "继续监控"}
+    return {
+        "diagnosis": "正常操作中",
+        "trigger_action": "none",
+        "message": "继续监控",
+    }
 
 
 if __name__ == "__main__":
