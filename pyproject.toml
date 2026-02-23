@@ -19,4 +19,5 @@ dependencies = [
     "sentence-transformers>=5.2.2",
     "sqlite-vec>=0.1.6",
     "uvicorn>=0.40.0",
+    "mcp>=1.26.0",
 ]
