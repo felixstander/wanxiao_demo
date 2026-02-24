@@ -1,7 +1,10 @@
+import argparse
+import os
 from datetime import date
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+import uvicorn
 
 
 mcp = FastMCP("SalesScenarioMockTools")
@@ -158,6 +161,15 @@ CITY_CARE_HINTS: dict[str, str] = {
 
 
 def _behavior_score(behaviors: list[str], viewed_issue_link_count: int) -> int:
+    """根据客户行为与链接查看次数计算意愿分数。
+
+    参数:
+        behaviors: 客户行为文本列表。
+        viewed_issue_link_count: 出单链接查看次数。
+
+    返回:
+        int: 行为得分，分数越高表示意愿越强。
+    """
     score = 0
     behavior_text = "|".join(behaviors)
     if "多次查看出单链接" in behavior_text:
@@ -173,6 +185,14 @@ def _behavior_score(behaviors: list[str], viewed_issue_link_count: int) -> int:
 
 
 def _intent_level_from_score(score: int) -> str:
+    """根据意愿分数映射高/中/低意向。
+
+    参数:
+        score: 客户意愿评分。
+
+    返回:
+        str: 意向等级（高意向、中意向、低意向）。
+    """
     if score >= 70:
         return "高意向"
     if score >= 40:
@@ -181,10 +201,26 @@ def _intent_level_from_score(score: int) -> str:
 
 
 def _resolve_customer(name: str) -> dict[str, Any] | None:
+    """按姓名从客户数据库中查询客户信息。
+
+    参数:
+        name: 客户姓名。
+
+    返回:
+        dict[str, Any] | None: 命中时返回客户画像，未命中返回 None。
+    """
     return CUSTOMER_DB.get(name)
 
 
 def _disease_risk_factor(diseases: list[str]) -> float:
+    """根据历史报销疾病列表计算疾病风险系数。
+
+    参数:
+        diseases: 历史报销疾病名称列表。
+
+    返回:
+        float: 疾病风险系数，用于保费测算。
+    """
     high_risk = {"恶性肿瘤", "心脑血管疾病", "慢性肾病"}
     mid_risk = {"乳腺结节", "甲状腺结节", "高血压", "糖尿病"}
     factor = 1.0
@@ -199,6 +235,14 @@ def _disease_risk_factor(diseases: list[str]) -> float:
 
 
 def _age_factor(age: int) -> float:
+    """根据年龄返回年龄风险系数。
+
+    参数:
+        age: 客户年龄。
+
+    返回:
+        float: 年龄风险系数。
+    """
     if age < 30:
         return 0.88
     if age < 40:
@@ -209,10 +253,26 @@ def _age_factor(age: int) -> float:
 
 
 def _gender_factor(gender: str) -> float:
+    """根据性别返回保费调节系数。
+
+    参数:
+        gender: 客户性别（男/女）。
+
+    返回:
+        float: 性别调节系数。
+    """
     return 1.08 if gender == "男" else 1.0
 
 
 def _intent_adjustment(intent_level: str) -> float:
+    """根据客户意愿等级返回保费微调系数。
+
+    参数:
+        intent_level: 客户意愿等级。
+
+    返回:
+        float: 意愿调节系数。
+    """
     if intent_level == "高意向":
         return 0.96
     if intent_level == "低意向":
@@ -221,6 +281,14 @@ def _intent_adjustment(intent_level: str) -> float:
 
 
 def _recommend_products_by_age(age: int) -> list[str]:
+    """根据年龄返回推荐产品列表。
+
+    参数:
+        age: 客户年龄。
+
+    返回:
+        list[str]: 推荐产品名称列表。
+    """
     if age < 30:
         return ["轻松医疗基础版", "安心意外Max"]
     if age < 40:
@@ -229,6 +297,14 @@ def _recommend_products_by_age(age: int) -> list[str]:
 
 
 def _nearest_festival(today: date) -> dict[str, Any]:
+    """计算距离当前日期最近的节日信息。
+
+    参数:
+        today: 当前日期。
+
+    返回:
+        dict[str, Any]: 最近节日的名称、日期与出行风险信息。
+    """
     current_year = today.year
     candidates: list[tuple[int, dict[str, Any]]] = []
     for item in FESTIVAL_CALENDAR:
@@ -248,6 +324,17 @@ def intelligent_judgment(
     behavior: str | None = None,
     viewed_issue_link_count: int | None = None,
 ) -> dict[str, Any]:
+    """根据客户基础信息与行为数据判断当前销售意愿等级。
+
+    参数:
+        customer_name: 客户姓名。
+        age: 客户年龄，可选。
+        behavior: 临时追加的一条行为描述，可选。
+        viewed_issue_link_count: 出单链接查看次数，可选。
+
+    返回:
+        dict[str, Any]: 包含判断状态、意愿分数、意向等级与推荐下一步工具。
+    """
     customer = _resolve_customer(customer_name)
     if customer is None and (age is None or behavior is None):
         return {
@@ -312,6 +399,18 @@ def issue_policy_tool(
     claim_count: int,
     reimbursed_diseases: list[str],
 ) -> dict[str, Any]:
+    """基于客户画像与风险因子生成报价结果并返回出单页面配置。
+
+    参数:
+        customer_name: 客户姓名。
+        age: 客户年龄。
+        gender: 客户性别，仅支持男/女。
+        claim_count: 历史出险次数。
+        reimbursed_diseases: 历史报销疾病列表。
+
+    返回:
+        dict[str, Any]: 包含保费测算结果、保费拆解、推荐产品与页面元素。
+    """
     if gender not in {"男", "女"}:
         return {
             "status": "error",
@@ -391,6 +490,15 @@ def product_comparison_tool(
     customer_name: str,
     viewed_products: list[str] | None = None,
 ) -> dict[str, Any]:
+    """根据客户浏览记录输出产品对比结果。
+
+    参数:
+        customer_name: 客户姓名。
+        viewed_products: 外部指定的待对比产品列表，可选。
+
+    返回:
+        dict[str, Any]: 包含产品对比表与推荐沟通话术。
+    """
     customer = _resolve_customer(customer_name)
     products = viewed_products or (customer["viewed_products"] if customer else [])
     if len(products) < 2:
@@ -428,6 +536,16 @@ def claim_case_tool(
     age: int,
     reimbursed_diseases: list[str],
 ) -> dict[str, Any]:
+    """基于年龄和疾病信息匹配理赔案例并返回展示数据。
+
+    参数:
+        customer_name: 客户姓名。
+        age: 客户年龄。
+        reimbursed_diseases: 历史报销疾病列表。
+
+    返回:
+        dict[str, Any]: 包含匹配案例数量、案例详情与沟通建议。
+    """
     matched_cases: list[dict[str, Any]] = []
     for item in CLAIM_CASE_DB:
         disease_hit = item["disease"] in reimbursed_diseases
@@ -468,6 +586,18 @@ def personal_needs_analysis_tool(
     family_structure: str,
     existing_insurance_budget: int = 0,
 ) -> dict[str, Any]:
+    """根据家庭结构和收入水平输出个人保障需求分析。
+
+    参数:
+        customer_name: 客户姓名。
+        age: 客户年龄。
+        annual_income: 年收入。
+        family_structure: 家庭结构描述。
+        existing_insurance_budget: 已有保险预算，默认 0。
+
+    返回:
+        dict[str, Any]: 包含推荐预算、保障重点与产品组合建议。
+    """
     gross_budget = int(annual_income * 0.1)
     recommended_budget = max(gross_budget - existing_insurance_budget, 1200)
     budget_monthly = round(recommended_budget / 12, 2)
@@ -516,6 +646,14 @@ def personal_needs_analysis_tool(
 
 @mcp.tool()
 def nurturing_process_tools(customer_name: str) -> dict[str, Any]:
+    """返回中意向客户培育阶段的过程工具清单。
+
+    参数:
+        customer_name: 客户姓名。
+
+    返回:
+        dict[str, Any]: 包含可编排的过程工具列表。
+    """
     return {
         "status": "success",
         "tool_name": "nurturing_process_tools",
@@ -545,6 +683,15 @@ def product_knowledge_share_tool(
     customer_name: str,
     consulted_products: list[str] | None = None,
 ) -> dict[str, Any]:
+    """根据客户历史咨询产品生成科普知识卡片。
+
+    参数:
+        customer_name: 客户姓名。
+        consulted_products: 指定咨询产品列表，可选。
+
+    返回:
+        dict[str, Any]: 包含知识卡片、文章标题与海报素材地址。
+    """
     customer = _resolve_customer(customer_name)
     products = consulted_products or (customer["consulted_products"] if customer else [])
     if not products:
@@ -582,6 +729,15 @@ def agent_ai_business_card_tool(
     agent_name: str = "金牌顾问小安",
     specialty: str = "医疗险+重疾险组合规划",
 ) -> dict[str, Any]:
+    """生成可分享可追踪的代理人 AI 名片素材。
+
+    参数:
+        agent_name: 代理人名称。
+        specialty: 代理人擅长领域描述。
+
+    返回:
+        dict[str, Any]: 包含名片信息、分享链接与追踪编码。
+    """
     return {
         "status": "success",
         "tool_name": "agent_ai_business_card_tool",
@@ -602,6 +758,16 @@ def periodic_care_tool(
     city: str | None = None,
     upcoming_event: str | None = None,
 ) -> dict[str, Any]:
+    """基于节日与城市信息生成定期关怀文案和保障建议。
+
+    参数:
+        customer_name: 客户姓名。
+        city: 客户城市，可选。
+        upcoming_event: 指定节日名称，可选。
+
+    返回:
+        dict[str, Any]: 包含关怀文案、关联产品与下次触达建议。
+    """
     customer = _resolve_customer(customer_name)
     city_name = city or (customer["city"] if customer else "上海")
     festival = {"name": upcoming_event} if upcoming_event else _nearest_festival(date.today())
@@ -630,6 +796,14 @@ def periodic_care_tool(
 
 @mcp.tool()
 def deep_guidance_tools(customer_name: str) -> dict[str, Any]:
+    """返回低意向或复杂场景下的深度引导工具清单。
+
+    参数:
+        customer_name: 客户姓名。
+
+    返回:
+        dict[str, Any]: 包含可编排的深度引导工具列表。
+    """
     return {
         "status": "success",
         "tool_name": "deep_guidance_tools",
@@ -660,6 +834,16 @@ def diagnose_stuck_status(
     elapsed_seconds: int,
     customer_intent: str,
 ) -> dict[str, Any]:
+    """根据停留时长与意愿阶段识别卡点并给出下一步动作。
+
+    参数:
+        current_tool_id: 当前工具 ID。
+        elapsed_seconds: 当前停留时长（秒）。
+        customer_intent: 客户意向等级。
+
+    返回:
+        dict[str, Any]: 包含诊断类型、触发动作与建议下一步工具。
+    """
     if current_tool_id == "issue_policy_tool" and elapsed_seconds >= 30:
         return {
             "diagnosis": "出单卡顿",
@@ -691,6 +875,86 @@ def diagnose_stuck_status(
     }
 
 
+def create_sse_app(mount_path: str) -> Any:
+    """创建用于 SSE 传输的 MCP ASGI 应用。
+
+    参数:
+        mount_path: SSE 路由挂载前缀。传入 "/" 时对外暴露 `/sse` 和 `/messages/`。
+
+    返回:
+        Any: 可直接交给 uvicorn 运行的 ASGI 应用对象。
+    """
+    return mcp.sse_app(mount_path=mount_path)
+
+
+def parse_cli_args() -> argparse.Namespace:
+    """解析命令行参数，用于配置服务监听地址与端口。
+
+    参数:
+        无。
+
+    返回:
+        argparse.Namespace: 包含 host、port、mount_path、log_level 四个字段。
+    """
+    parser = argparse.ArgumentParser(description="Run SalesScenarioMockTools MCP server with SSE via uvicorn")
+    parser.add_argument(
+        "--host",
+        default=os.getenv("MCP_HOST", "127.0.0.1"),
+        help="监听 IP 地址，默认 127.0.0.1",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("MCP_PORT", "8000")),
+        help="监听端口，默认 8000",
+    )
+    parser.add_argument(
+        "--mount-path",
+        default=os.getenv("MCP_MOUNT_PATH", "/"),
+        help="SSE 路由挂载路径，默认 '/'",
+    )
+    parser.add_argument(
+        "--log-level",
+        default=os.getenv("MCP_LOG_LEVEL", "info"),
+        choices=["critical", "error", "warning", "info", "debug", "trace"],
+        help="uvicorn 日志级别",
+    )
+    return parser.parse_args()
+
+
+def run_sse_server_with_uvicorn(
+    host: str,
+    port: int,
+    mount_path: str,
+    log_level: str,
+) -> None:
+    """使用 uvicorn 启动基于 SSE 传输的 Sales Mock MCP 服务。
+
+    参数:
+        host: 服务监听 IP。
+        port: 服务监听端口。
+        mount_path: SSE 路由挂载前缀。
+        log_level: uvicorn 日志级别。
+
+    返回:
+        None: 函数会阻塞运行，直到服务退出。
+    """
+    app_instance = create_sse_app(mount_path=mount_path)
+    uvicorn.run(app_instance, host=host, port=port, log_level=log_level)
+
+
+app = create_sse_app(mount_path=os.getenv("MCP_MOUNT_PATH", "/"))
+
+
 if __name__ == "__main__":
-    print("Starting Sales Mock Tools MCP Server...")
-    mcp.run()
+    args = parse_cli_args()
+    print(
+        "Starting SalesScenarioMockTools MCP Server via uvicorn "
+        f"(transport=sse, host={args.host}, port={args.port}, mount_path={args.mount_path})..."
+    )
+    run_sse_server_with_uvicorn(
+        host=args.host,
+        port=args.port,
+        mount_path=args.mount_path,
+        log_level=args.log_level,
+    )
