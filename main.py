@@ -24,6 +24,9 @@ from pydantic import BaseModel, Field
 from src.output_sanitize_config import load_output_sanitize_config
 from src.prompt_config import PromptConfig
 
+# 倒计时 MCP 服务配置
+COUNTDOWN_MCP_URL = os.getenv("COUNTDOWN_MCP_URL", "http://127.0.0.1:8765")
+
 PROJECT_ROOT = Path(__file__).resolve().parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 MEMORIES_DIR = PROJECT_ROOT / "memories"
@@ -216,7 +219,7 @@ def _latest_daily_memory_files(limit: int = 2) -> list[Path]:
 def _read_text_file(path: Path) -> str:
     if not path.exists() or not path.is_file():
         return ""
-    return path.read_text(encoding="utf-8")
+    return path.read_text(encoding="utf-8", errors="replace")
 
 
 def _memories_payload() -> dict[str, Any]:
@@ -564,42 +567,6 @@ def _get_msg_content(msg: Any) -> Any:
     return getattr(msg, "content", "")
 
 
-def _get_tool_calls(msg: Any) -> list[Any]:
-    if isinstance(msg, dict):
-        tool_calls = msg.get("tool_calls")
-        return tool_calls if isinstance(tool_calls, list) else []
-    tool_calls = getattr(msg, "tool_calls", None)
-    return tool_calls if isinstance(tool_calls, list) else []
-
-
-def _extract_ai_text_from_updates(update_chunk: Any) -> str:
-    data = update_chunk
-    if (
-        isinstance(update_chunk, (tuple, list))
-        and len(update_chunk) == 2
-        and isinstance(update_chunk[1], dict)
-    ):
-        data = update_chunk[1]
-
-    if not isinstance(data, dict):
-        return ""
-
-    candidates: list[str] = []
-    for node_update in data.values():
-        if not isinstance(node_update, dict):
-            continue
-        messages = node_update.get("messages")
-        if not isinstance(messages, list):
-            continue
-        for msg in messages:
-            if _get_msg_type(msg) == "ai":
-                text = _message_content_to_text(_get_msg_content(msg))
-                if text:
-                    candidates.append(text)
-
-    return candidates[-1] if candidates else ""
-
-
 def _extract_ai_text_from_output(output: Any) -> str:
     if not isinstance(output, dict):
         return ""
@@ -637,73 +604,6 @@ def _preview_output(value: Any, limit: int = 120) -> str:
     if len(text) > limit:
         return f"{text[:limit]}..."
     return text
-
-
-def _extract_stream_text(chunk: Any) -> str:
-    candidate = chunk
-    if isinstance(chunk, (tuple, list)) and chunk:
-        candidate = chunk[0]
-
-    if hasattr(candidate, "content"):
-        return _message_content_to_text(getattr(candidate, "content"))
-
-    if isinstance(candidate, dict):
-        if "content" in candidate:
-            return _message_content_to_text(candidate.get("content"))
-    return ""
-
-
-def _extract_message_and_metadata(chunk: Any) -> tuple[Any, dict[str, Any]]:
-    if isinstance(chunk, (tuple, list)) and len(chunk) >= 2:
-        maybe_metadata = chunk[1]
-        metadata = maybe_metadata if isinstance(maybe_metadata, dict) else {}
-        return chunk[0], metadata
-    return chunk, {}
-
-
-def _iter_update_descriptions(update_chunk: Any) -> list[str]:
-    namespace: tuple[Any, ...] = ()
-    data = update_chunk
-
-    if (
-        isinstance(update_chunk, (tuple, list))
-        and len(update_chunk) == 2
-        and isinstance(update_chunk[1], dict)
-    ):
-        namespace = tuple(update_chunk[0]) if isinstance(update_chunk[0], tuple) else ()
-        data = update_chunk[1]
-
-    lines: list[str] = []
-    if namespace:
-        lines.append(f"子图: {' > '.join(str(x) for x in namespace)}")
-
-    if not isinstance(data, dict):
-        return lines
-
-    for node_name, node_update in data.items():
-        lines.append(f"步骤: {node_name}")
-
-        if isinstance(node_update, dict):
-            messages = node_update.get("messages")
-            if isinstance(messages, list):
-                for msg in messages:
-                    tool_calls = _get_tool_calls(msg)
-                    if tool_calls:
-                        for tc in tool_calls:
-                            if isinstance(tc, dict):
-                                tool_name = tc.get("name") or tc.get("id") or "unknown"
-                                lines.append(f"调用工具: {tool_name}")
-
-                    msg_type = _get_msg_type(msg)
-                    if msg_type == "tool":
-                        tool_name = (
-                            msg.get("name", "unknown")
-                            if isinstance(msg, dict)
-                            else getattr(msg, "name", "unknown")
-                        )
-                        lines.append(f"工具返回: {tool_name}")
-
-    return lines
 
 
 async def stream_chat_with_agent(
@@ -769,11 +669,26 @@ async def stream_chat_with_agent(
 
             if kind == "on_tool_end":
                 tool_output = data.get("output")
-                yield {"event": "process", "text": f"工具完成: {name}"}
+                tool_result_preview = ""
                 if tool_output is not None:
+                    tool_result_preview = _preview_output(tool_output)
+
+                # 检测 start_countdown_async 工具完成，发送 countdown_started 事件
+                if name == "start_countdown_async" and tool_output:
+                    task_id = tool_output.get("task_id")
+                    countdown_seconds = tool_output.get("countdown_seconds", 10)
+                    if task_id:
+                        yield {
+                            "event": "countdown_started",
+                            "task_id": task_id,
+                            "countdown_seconds": countdown_seconds,
+                        }
+
+                yield {"event": "process", "text": f"工具完成: {name}"}
+                if tool_result_preview:
                     yield {
                         "event": "process",
-                        "text": f"工具结果: {_preview_output(tool_output)}",
+                        "text": f"工具结果: {tool_result_preview}",
                     }
                 continue
 
@@ -846,11 +761,64 @@ def create_app() -> FastAPI:
 
     @app.get("/api/customers")
     def customers() -> dict[str, Any]:
-        return {"customers": _customers_payload(PROJECT_ROOT / "data" / "customer_db.csv")}
+        return {
+            "customers": _customers_payload(PROJECT_ROOT / "data" / "customer_db.csv")
+        }
 
     @app.get("/api/memories")
     def memories() -> dict[str, Any]:
         return _memories_payload()
+
+    @app.get("/api/countdown/{task_id}")
+    async def get_countdown_status_api(task_id: str) -> dict[str, Any]:
+        """代理查询 MCP 服务的倒计时状态"""
+        import urllib.error
+        import urllib.request
+
+        try:
+            # 调用 MCP 服务的 get_countdown_status 工具
+            # MCP 通过 /messages/ 端点接收 JSON-RPC 请求
+            request_body = json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "get_countdown_status",
+                        "arguments": {"task_id": task_id},
+                    },
+                }
+            ).encode("utf-8")
+
+            req = urllib.request.Request(
+                f"{COUNTDOWN_MCP_URL}/messages/",
+                data=request_body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+
+            with urllib.request.urlopen(req, timeout=5) as response:
+                response_data = json.loads(response.read().decode("utf-8"))
+                # 解析 MCP 响应
+                if "result" in response_data:
+                    result = response_data["result"]
+                    if isinstance(result, dict) and "content" in result:
+                        content = result["content"]
+                        if isinstance(content, list) and len(content) > 0:
+                            text_item = content[0]
+                            if isinstance(text_item, dict) and "text" in text_item:
+                                data = json.loads(text_item["text"])
+                                return data
+
+                # 如果无法解析，返回错误
+                return {"status": "error", "message": "无法解析 MCP 响应"}
+
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return {"status": "not_found", "task_id": task_id}
+            return {"status": "error", "message": f"MCP 服务错误: {e.code}"}
+        except Exception as e:
+            return {"status": "error", "message": f"查询失败: {str(e)}"}
 
     @app.get("/")
     def index() -> HTMLResponse:

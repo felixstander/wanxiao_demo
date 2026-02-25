@@ -20,4 +20,5 @@ dependencies = [
     "sqlite-vec>=0.1.6",
     "uvicorn>=0.40.0",
     "mcp>=1.26.0",
+    "langchain-daytona>=0.0.2",
 ]

@@ -9,20 +9,16 @@ description: 万销客户阶段判断与需求分析技能。用于代理人输�
 
 ## 工作流
 
-1. 从前端输入中提取客户信息：`customer_name`、`age`、`gender`、`behavior`。
+1. 从前端输入中提取客户姓名。
 2. 调用 `intelligent_judgment` 获取 `intent_level`。
-3. 按意向分流调用工具：
-   - 高意向：`issue_policy_tool`
-   - 中意向：`claim_case_tool` + `personal_needs_analysis_tool`
-   - 低意向：`product_knowledge_share_tool` + `periodic_care_tool`
-4. 展示对应工具结果后，调用倒计时监控：`diagnose_stuck_point`。
-5. 返回结构化结果，包含意向、工具结果、倒计时话术触发结果。
+3. 按意向分流调用工具。
+4. 返回结构化结果，包含意向、工具结果。
 
 ## 销售指导手册（执行规则）
 
-### 前端输入
+### 客户意向判断
 
-- 客户基础信息：姓名、年龄、性别、行为。
+- 通过客户姓名，调用 `intelligent_judgment `获取客户完整信息后，得到客户购买意向。
 
 ### 意向分流
 
@@ -30,11 +26,6 @@ description: 万销客户阶段判断与需求分析技能。用于代理人输�
 - **中意向**：调用 `claim_case_tool` 与 `personal_needs_analysis_tool`。
 - **低意向**：调用 `product_knowledge_share_tool` 与 `periodic_care_tool`。
 
-### 倒计时策略
-
-- **高意向**：10 秒，话术：`您已经停留一段时间了，是否需要帮您解释保单的内容？`
-- **中意向**：10 秒，话术：`是否遇到理解困难？`
-- **低意向**：10 秒，话术：`内容是否符合您的要求？`
 
 ## 绑定mcp工具
 
@@ -48,50 +39,87 @@ description: 万销客户阶段判断与需求分析技能。用于代理人输�
   - `product_knowledge_share_tool`
   - `agent_ai_business_card_tool`
   - `periodic_care_tool`
-  - `diagnose_stuck_point`
-- 默认服务地址：
-  - 销售场景服务：`http://127.0.0.1:8000`
-  - 倒计时监控服务：`http://127.0.0.1:8001`
 
 ### Basic Usage
 
-If running deepagents from a virtual environment:
+如果虚拟环境已激活：
+
 ```bash
-.venv/bin/python ./skills/万销销售场景/scripts/run_wanxiao_sales_flow.py "张三" --age 35 --gender 男 --behavior "多次查看出单链接" --claim-count 1 --reimbursed-diseases "甲状腺结节" --family-structure "已婚一孩" --annual-income 280000 --sales-base-url "http://127.0.0.1:8765" --monitor-base-url "http://127.0.0.1:8766"
+# 智能判断客户意向
+.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py intelligent_judgment --customer-name "张三" --base-url "http://127.0.0.1:8000"
+
+# 出单工具
+.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py issue_policy_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+
+# 产品对比
+.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py product_comparison_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+
+# 理赔案例
+.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py claim_case_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+
+# 个人需求分析
+.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py personal_needs_analysis_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+
+# 产品知识分享
+.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py product_knowledge_share_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+
+# 代理人AI名片
+.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py agent_ai_business_card_tool --agent-name "金牌顾问小安" --specialty "医疗险+重疾险组合规划" --base-url "http://127.0.0.1:8000"
+
+# 定期关怀
+.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py periodic_care_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+
+# 深度引导工具
+.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py deep_guidance_tools --customer-name "张三" --base-url "http://127.0.0.1:8000"
 ```
 
-如果直接使用系统 Python：
+如果直接使用系统 Python（未激活虚拟环境）：
+
 ```bash
-python ./skills/万销销售场景/scripts/run_wanxiao_sales_flow.py "李四" --age 42 --gender 女 --behavior "浏览产品对比页" --claim-count 2 --reimbursed-diseases "乳腺结节,胆囊炎" --family-structure "已婚二孩" --annual-income 360000 --sales-base-url "http://127.0.0.1:8765" --monitor-base-url "http://127.0.0.1:8766"
+# 示例：智能判断客户意向
+python3 ./skills/万销销售场景/scripts/call_sales_mcp.py intelligent_judgment --customer-name "李四" --base-url "http://127.0.0.1:8000"
 ```
 
-低意向示例：
+也可通过环境变量设置 MCP 服务地址：
+
 ```bash
-python ./skills/万销销售场景/scripts/run_wanxiao_sales_flow.py "王五" --age 28 --gender 男 --behavior "第一次点击咨询" --consulted-products "轻松医疗基础版" --city "南京" --sales-base-url "http://127.0.0.1:8765" --monitor-base-url "http://127.0.0.1:8766"
+export MCP_BASE_URL="http://127.0.0.1:8000"
+.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py intelligent_judgment --customer-name "王五"
 ```
 
-## 按需读取倒计时参考
-
-- 当需要了解倒计时技能的完整调用规范时，读取：`references/任务倒计时-SKILL.md`
-- 该参考文件来自“任务倒计时”技能，包含 SSE 建连、initialize、tools/call、轮询结果的细化流程。
 
 ## 调用规则（强约束）
 
 1. 必须先调用 `intelligent_judgment`，再按意向分流。
-2. 必须按手册执行倒计时策略，倒计时统一为 10 秒。
-3. 需要监控结果时，必须调用 `diagnose_stuck_point`，不得只做本地等待。
-4. 若某些字段缺失，优先使用前端提供值；缺失时再用脚本默认值。
 
 ## 不要做的事
 
 - 不要跳过意向判断直接调用出单/培育工具。
 - 不要把中意向与低意向的触发话术混用。
-- 不要把 `sales-base-url` 与 `monitor-base-url` 写错为同一个不可用服务。
 
 ## 输出规范
 
-- 输出必须包含：`intent_level`、`route_tools`、`countdown`。
 - 每个工具结果优先使用 `structuredContent`。
 - 失败时返回 `status=error` 与明确错误信息（连接失败、参数缺失、调用超时）。
 
+### 按意向分层的输出要求
+
+#### 高意向（`issue_policy_tool`）
+输出应聚焦促成转化：
+- **保费金额**：明确展示 `annual_premium` / `monthly_premium`
+- **行动催促**：加入紧迫感话术（如"限时优惠"、"早投保早保障"）
+- **简化决策**：突出核心保障与一键投保入口
+
+#### 中意向（`claim_case_tool`、`personal_needs_analysis_tool`）
+输出应侧重价值论证：
+- **分析结果**：清晰呈现需求分析结论、匹配案例数量
+- **亮点内容**：强调产品 `highlights`、理赔速度、保障范围优势
+- **对比优势**：如有产品对比，突出差异化价值点
+
+#### 低意向（`product_knowledge_share_tool`、`periodic_care_tool`）
+输出应采用教育+关怀策略：
+- **知识科普**：解释保险概念、条款含义、常见误区
+- **关怀形式**：结合节日/天气等场景给出温馨提示
+- **软性引导**：不直接推销，而是建立信任与专业形象
+- **留资钩子**：提供后续咨询入口，保持长期触达可能
 

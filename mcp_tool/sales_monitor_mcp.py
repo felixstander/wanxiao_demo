@@ -1,95 +1,117 @@
 import argparse
 import asyncio
 import os
+import uuid
 from time import monotonic
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
 import uvicorn
-
+from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("SalesActivityMonitor")
 
+# 全局内存存储：管理倒计时任务状态
+_countdown_tasks: dict[str, dict] = {}
+_countdown_lock = asyncio.Lock()
+
 
 @mcp.tool()
-async def diagnose_stuck_point(
+async def start_countdown_async(
     tool_name: str,
     countdown_seconds: int,
     timeout_script: str,
-    tick_seconds: int = 1,
-    include_timeline: bool = True,
 ) -> dict[str, Any]:
-    """异步监控指定工具的倒计时并在超时后返回预设话术。
+    """启动异步非阻塞倒计时，立即返回 task_id，后台执行倒计时。
 
     参数:
         tool_name: 当前被监控的工具名称，用于标识倒计时归属。
-        countdown_seconds: 倒计时时长（秒）。函数会在服务端异步等待该时长结束。
+        countdown_seconds: 倒计时时长（秒）。
         timeout_script: 倒计时结束后需要触发/展示的话术内容。
-        tick_seconds: 倒计时轮询步长（秒），每个步长记录一次剩余时间；默认 1 秒。
-        include_timeline: 是否返回完整监控轨迹（tick + timeout 事件）；默认返回。
 
     返回:
         dict[str, Any]:
-            - 参数非法时返回错误结构：
-              {"status": "error", "message": str, "data": None}
-            - 倒计时完成时返回触发结果，包含：
-              status/tool_name/countdown_seconds/elapsed_seconds/
-              trigger_action/timeout_script/timeline。
+            - task_id: 倒计时任务唯一标识
+            - status: "started"
+            - countdown_seconds: 倒计时总时长
+            - tool_name: 工具名称
     """
-    if countdown_seconds <= 0:
-        return {
-            "status": "error",
-            "message": "countdown_seconds 必须大于 0",
-            "data": None,
-        }
+    task_id = str(uuid.uuid4())
 
-    if tick_seconds <= 0:
-        return {
-            "status": "error",
-            "message": "tick_seconds 必须大于 0",
-            "data": None,
-        }
-
-    timeline: list[dict[str, Any]] = []
-    started_at = monotonic()
-    elapsed_seconds = 0
-
-    while elapsed_seconds < countdown_seconds:
-        remaining_seconds = countdown_seconds - elapsed_seconds
-        if include_timeline:
-            timeline.append(
-                {
-                    "event": "tick",
-                    "tool_name": tool_name,
-                    "remaining_seconds": remaining_seconds,
-                }
-            )
-
-        sleep_for = min(tick_seconds, max(remaining_seconds, 0))
-        await asyncio.sleep(sleep_for)
-        elapsed_seconds = int(monotonic() - started_at)
-
-    total_elapsed = round(monotonic() - started_at, 3)
-
-    if include_timeline:
-        timeline.append(
-            {
-                "event": "timeout",
+    async def countdown_task() -> None:
+        """后台倒计时任务"""
+        started_at = asyncio.get_event_loop().time()
+        async with _countdown_lock:
+            _countdown_tasks[task_id] = {
+                "task_id": task_id,
                 "tool_name": tool_name,
-                "remaining_seconds": 0,
-                "script": timeout_script,
+                "countdown_seconds": countdown_seconds,
+                "timeout_script": timeout_script,
+                "started_at": started_at,
+                "status": "running",
+                "elapsed_seconds": 0,
             }
-        )
+
+        # 执行倒计时
+        await asyncio.sleep(countdown_seconds)
+
+        # 倒计时完成，更新状态
+        async with _countdown_lock:
+            if task_id in _countdown_tasks:
+                _countdown_tasks[task_id]["status"] = "completed"
+                _countdown_tasks[task_id]["elapsed_seconds"] = countdown_seconds
+
+    # 启动后台任务
+    asyncio.create_task(countdown_task())
 
     return {
-        "status": "timeout_triggered",
-        "tool_name": tool_name,
+        "task_id": task_id,
+        "status": "started",
         "countdown_seconds": countdown_seconds,
-        "elapsed_seconds": total_elapsed,
-        "trigger_action": "show_timeout_script",
-        "timeout_script": timeout_script,
-        "timeline": timeline,
+        "tool_name": tool_name,
     }
+
+
+@mcp.tool()
+async def get_countdown_status(task_id: str) -> dict[str, Any]:
+    """查询倒计时任务状态。
+
+    参数:
+        task_id: 倒计时任务唯一标识。
+
+    返回:
+        dict[str, Any]:
+            - status: "running" | "completed" | "not_found"
+            - task_id: 任务ID
+            - elapsed_seconds: 已过去秒数（running时实时计算）
+            - remaining_seconds: 剩余秒数（仅running时）
+            - timeout_script: 倒计时结束后的话术（completed时返回）
+    """
+    async with _countdown_lock:
+        task = _countdown_tasks.get(task_id)
+        if not task:
+            return {
+                "status": "not_found",
+                "task_id": task_id,
+            }
+
+        if task["status"] == "running":
+            elapsed = int(asyncio.get_event_loop().time() - task["started_at"])
+            remaining = max(0, task["countdown_seconds"] - elapsed)
+            return {
+                "status": "running",
+                "task_id": task_id,
+                "elapsed_seconds": elapsed,
+                "remaining_seconds": remaining,
+                "timeout_script": task["timeout_script"],
+            }
+        else:
+            # completed
+            return {
+                "status": "completed",
+                "task_id": task_id,
+                "timeout_script": task["timeout_script"],
+                "elapsed_seconds": task["countdown_seconds"],
+            }
 
 
 def create_sse_app(mount_path: str) -> Any:
@@ -113,7 +135,9 @@ def parse_cli_args() -> argparse.Namespace:
     返回:
         argparse.Namespace: 包含 host、port、mount_path、log_level 四个字段。
     """
-    parser = argparse.ArgumentParser(description="Run SalesActivityMonitor MCP server with SSE via uvicorn")
+    parser = argparse.ArgumentParser(
+        description="Run SalesActivityMonitor MCP server with SSE via uvicorn"
+    )
     parser.add_argument(
         "--host",
         default=os.getenv("MCP_HOST", "127.0.0.1"),

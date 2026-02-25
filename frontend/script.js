@@ -17,6 +17,7 @@ class ChatApp {
     this.memoryVersion = "";
     this.memoryPollTimer = null;
     this.isLoadingMemories = false;
+    this.activeCountdowns = new Map(); // task_id -> {timer, script}
     this.init();
   }
 
@@ -380,11 +381,15 @@ class ChatApp {
       return;
     }
 
+    // 用户发送新消息时，取消所有活跃倒计时（视为"点击/交互"）
+    this.cancelAllCountdowns();
+
     this.addUserMessage(message);
-    const botMessageEl = this.addBotMessage("");
+    const botMessageEl = this.addBotMessage("", true);
     this.resetProcessLogs();
     this.messageInput.value = "";
     this.setSending(true);
+
 
     try {
       this.abortController = new AbortController();
@@ -441,6 +446,12 @@ class ChatApp {
             this.updateBotMessage(botMessageEl, fullReply);
           } else if (payload.event === "process") {
             this.addProcessLine(payload.text || "(空过程信息)");
+          } else if (payload.event === "countdown_started") {
+            // 收到倒计时启动事件，开始轮询
+            const taskId = payload.task_id;
+            const countdownSeconds = payload.countdown_seconds || 10;
+            this.addProcessLine(`倒计时启动: ${taskId} (${countdownSeconds}s)`);
+            this.startCountdown(taskId);
           } else if (payload.event === "done") {
             this.threadId = payload.thread_id || this.threadId;
             this.history = Array.isArray(payload.history) ? payload.history : this.history;
@@ -513,15 +524,22 @@ class ChatApp {
     this.scrollToBottom();
   }
 
-  addBotMessage(content) {
+  addBotMessage(content, isLoading = false) {
     const messageDiv = document.createElement("div");
     messageDiv.className = "message bot-message";
 
     const contentWrap = document.createElement("div");
     contentWrap.className = "message-content";
-    const p = document.createElement("p");
-    p.textContent = content;
-    contentWrap.appendChild(p);
+    if (isLoading) {
+      const loadingDots = document.createElement("div");
+      loadingDots.className = "loading-dots";
+      loadingDots.innerHTML = "<span></span><span></span><span></span>";
+      contentWrap.appendChild(loadingDots);
+    } else {
+      const p = document.createElement("p");
+      p.textContent = content;
+      contentWrap.appendChild(p);
+    }
 
     const time = document.createElement("div");
     time.className = "message-time";
@@ -535,9 +553,22 @@ class ChatApp {
   }
 
   updateBotMessage(messageDiv, content) {
-    const p = messageDiv.querySelector(".message-content p");
-    if (p) {
+    const contentWrap = messageDiv.querySelector(".message-content");
+    if (!contentWrap) {
+      return;
+    }
+
+    const loadingDots = contentWrap.querySelector(".loading-dots");
+    if (loadingDots) {
+      loadingDots.remove();
+      const p = document.createElement("p");
       p.textContent = content;
+      contentWrap.appendChild(p);
+    } else {
+      const p = contentWrap.querySelector("p");
+      if (p) {
+        p.textContent = content;
+      }
     }
     this.scrollToBottom();
   }
@@ -575,6 +606,94 @@ class ChatApp {
       "'": "&#039;",
     };
     return text.replace(/[&<>"']/g, (m) => map[m]);
+  }
+
+  // ========== 倒计时相关方法 ==========
+
+  /**
+   * 启动倒计时轮询
+   * @param {string} taskId - 倒计时任务ID
+   */
+  startCountdown(taskId) {
+    // 如果已存在同 taskId 的倒计时，先取消
+    if (this.activeCountdowns.has(taskId)) {
+      clearInterval(this.activeCountdowns.get(taskId).timer);
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const response = await fetch(`/api/countdown/${taskId}`);
+        if (!response.ok) {
+          if (response.status === 404) {
+            clearInterval(interval);
+            this.activeCountdowns.delete(taskId);
+          }
+          return;
+        }
+
+        const data = await response.json();
+
+        if (data.status === "completed") {
+          clearInterval(interval);
+          this.activeCountdowns.delete(taskId);
+          this.showTimeoutScript(data.timeout_script);
+        } else if (data.status === "not_found") {
+          clearInterval(interval);
+          this.activeCountdowns.delete(taskId);
+        } else if (data.status === "error") {
+          console.error("Countdown query error:", data.message);
+          clearInterval(interval);
+          this.activeCountdowns.delete(taskId);
+        }
+        // running 状态继续轮询
+      } catch (error) {
+        console.error("Countdown poll error:", error);
+        clearInterval(interval);
+        this.activeCountdowns.delete(taskId);
+      }
+    }, 1000); // 每秒轮询一次
+
+    this.activeCountdowns.set(taskId, { timer: interval });
+  }
+
+  /**
+   * 取消所有活跃的倒计时
+   */
+  cancelAllCountdowns() {
+    for (const [taskId, { timer }] of this.activeCountdowns) {
+      clearInterval(timer);
+    }
+    this.activeCountdowns.clear();
+  }
+
+  /**
+   * 展示倒计时结束后的话术
+   * @param {string} script - 话术内容
+   */
+  showTimeoutScript(script) {
+    if (!script || typeof script !== "string") {
+      return;
+    }
+
+    const messageDiv = document.createElement("div");
+    messageDiv.className = "message bot-message countdown-script";
+
+    const contentWrap = document.createElement("div");
+    contentWrap.className = "message-content";
+    const p = document.createElement("p");
+    p.textContent = script;
+    contentWrap.appendChild(p);
+
+    const time = document.createElement("div");
+    time.className = "message-time";
+    time.textContent = this.formatNow();
+
+    messageDiv.appendChild(contentWrap);
+    messageDiv.appendChild(time);
+    this.chatMessages.appendChild(messageDiv);
+    this.scrollToBottom();
+
+    this.addProcessLine("倒计时结束，话术已展示");
   }
 }
 

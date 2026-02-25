@@ -5,9 +5,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
 import uvicorn
-
+from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("SalesScenarioMockTools")
 
@@ -194,7 +193,7 @@ def _intent_level_from_score(score: int) -> str:
     返回:
         str: 意向等级（高意向、中意向、低意向）。
     """
-    if score >= 70:
+    if score >= 60:
         return "高意向"
     if score >= 40:
         return "中意向"
