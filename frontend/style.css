@@ -102,6 +102,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: 0;
 }
 
 .process-panel {
@@ -133,14 +134,85 @@ body {
   gap: 8px;
 }
 
-.skills-section {
+.customers-section {
   border-top: 1px solid #eef1fb;
   background: #ffffff;
-  padding: 12px 16px;
-  height: 190px;
+  padding: 12px 16px 14px;
+  min-height: 180px;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  gap: 10px;
+}
+
+.customers-header {
+  font-size: 14px;
+  font-weight: 700;
+  color: #252941;
+}
+
+.customers-list {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+}
+
+.customer-card {
+  flex: 0 0 220px;
+  background: #fafbff;
+  border: 1px solid #edf0fa;
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.customer-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2647;
+  margin-bottom: 4px;
+}
+
+.customer-field {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: #49527d;
+}
+
+.customer-field strong {
+  color: #2f365f;
+  font-weight: 600;
+}
+
+.customer-field.behavior {
+  align-items: flex-start;
+}
+
+.customer-field.behavior strong {
+  text-align: right;
+  word-break: break-word;
+}
+
+.customer-card.muted {
+  color: #6f7596;
+  background: #f4f6ff;
+}
+
+.skills-section {
+  background: #ffffff;
+  border-radius: 20px;
+  box-shadow: 0 24px 40px rgba(25, 24, 53, 0.16);
+  border: 1px solid #edf0fa;
+  display: flex;
+  flex-direction: column;
+  min-height: 210px;
+  overflow: hidden;
 }
 
 .skills-header {
@@ -160,8 +232,7 @@ body {
   flex-direction: column;
   gap: 8px;
   background: #fafbff;
-  border: 1px solid #edf0fa;
-  border-radius: 12px;
+  border-top: 1px solid #edf0fa;
 }
 
 .skill-item {
@@ -482,8 +553,16 @@ body {
   }
 
   .skills-section {
-    height: 28vh;
-    padding: 10px 12px;
+    min-height: 26vh;
+    border-radius: 14px;
+  }
+
+  .customers-section {
+    min-height: 26vh;
+  }
+
+  .customer-card {
+    flex-basis: 78vw;
   }
 
   .side-memory-card {

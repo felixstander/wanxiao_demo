@@ -1,3 +1,4 @@
+import csv
 import json
 import os
 import re
@@ -82,8 +83,8 @@ def _ensure_memory_files(today: date) -> tuple[str, str]:
         )
 
     return (
-        PROJECT_ROOT / "memories/MEMORY.md",
-        PROJECT_ROOT / f"memories/daily/{today_name}.md",
+        "/memories/MEMORY.md",
+        f"/memories/daily/{today_name}.md",
     )
 
 
@@ -104,9 +105,7 @@ def build_agent() -> Any:
     today = date.today()
     yesterday = today - timedelta(days=1)
     long_term_path, today_path = _ensure_memory_files(today)
-    yesterday_path = (
-        PROJECT_ROOT / f"memories/daily/{yesterday.strftime('%Y-%m-%d')}.md"
-    )
+    yesterday_path = f"/memories/daily/{yesterday.strftime('%Y-%m-%d')}.md"
 
     system_prompt = PROMPTS.render_prompt(
         "main_system",
@@ -131,7 +130,7 @@ def build_agent() -> Any:
         store=InMemoryStore(),
         backend=FilesystemBackend(root_dir=str(PROJECT_ROOT)),
         skills=[str(skills_dir)],
-        memory=[str(long_term_path), str(today_path), str(yesterday_path)],
+        memory=[long_term_path, today_path, yesterday_path],
         checkpointer=CHECKPOINTER,
         system_prompt=system_prompt,
     )
@@ -159,6 +158,36 @@ def _list_skill_packages(skills_dir: Path) -> list[dict[str, str]]:
 
     packages.sort(key=lambda item: (item["name"], item["path"]))
     return packages
+
+
+def _customers_payload(csv_path: Path) -> list[dict[str, str]]:
+    if not csv_path.exists() or not csv_path.is_file():
+        return []
+
+    customers: list[dict[str, str]] = []
+    with csv_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            if not isinstance(row, dict):
+                continue
+
+            name = str(row.get("name", "")).strip()
+            age = str(row.get("age", "")).strip()
+            gender = str(row.get("gender", "")).strip()
+            behavior = str(row.get("behaviors", "")).strip()
+            if not name:
+                continue
+
+            customers.append(
+                {
+                    "name": name,
+                    "age": age,
+                    "gender": gender,
+                    "behavior": behavior,
+                }
+            )
+
+    return customers
 
 
 def _frontend_asset_version() -> str:
@@ -814,6 +843,10 @@ def create_app() -> FastAPI:
     @app.get("/api/skills")
     def skills() -> dict[str, Any]:
         return {"skills": _list_skill_packages(PROJECT_ROOT / "skills")}
+
+    @app.get("/api/customers")
+    def customers() -> dict[str, Any]:
+        return {"customers": _customers_payload(PROJECT_ROOT / "data" / "customer_db.csv")}
 
     @app.get("/api/memories")
     def memories() -> dict[str, Any]:

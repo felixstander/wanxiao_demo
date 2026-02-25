@@ -1,0 +1,4 @@
+name,age,gender,behaviors,viewed_issue_link_count,viewed_products,consulted_products,claim_count,reimbursed_diseases,family_structure,annual_income,city,birthday
+张三,35,男,多次查看出单链接|查看重疾产品详情|咨询报销范围,5,守护重疾Pro|全家医疗Plus|安心意外Max,守护重疾Pro|全家医疗Plus,1,甲状腺结节,已婚一孩,280000,上海,03-18
+李四,42,女,浏览产品对比页|多次查看理赔案例|未点击立即购买,2,臻选医疗VIP|守护重疾Pro,臻选医疗VIP,2,乳腺结节|胆囊炎,已婚二孩,360000,杭州,10-06
+王五,28,男,第一次点击咨询|询问基础概念|收藏了保险科普海报,0,轻松医疗基础版,轻松医疗基础版,0,,单身,140000,南京,12-24

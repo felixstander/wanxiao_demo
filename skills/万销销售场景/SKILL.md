@@ -1,13 +1,13 @@
 ---
 name: wanxiao-sales-scenario
-description: 万销销售场景编排技能。用于代理人在前端点击客户后，按“智能判断、意向分流、工具执行、倒计时话术提醒”执行完整销售动作。会调用 SalesScenarioMockTools 的 intelligent_judgment、issue_policy_tool、claim_case_tool、personal_needs_analysis_tool、product_knowledge_share_tool、periodic_care_tool 等工具，并在末尾调用 SalesActivityMonitor 的 diagnose_stuck_point。适用于保险销售演示、客户意向分层和跟进话术触发。
+description: 万销客户阶段判断与需求分析技能。用于代理人输入“客户姓名”后，判断该客户当前所处销售阶段（高意向/中意向/低意向）以及下一步最需要的支持内容（出单推进、培育解释、知识教育、定期关怀）。当用户的问题核心是“这个客户现在处于什么阶段、他现在最需要什么”时使用。
 ---
 
 # 万销销售场景（意向分流 + 工具编排 + 倒计时提醒）
 
 本 Skill 用于执行销售指导手册：前端展示客户画像后，代理人点击客户，先判断意向，再按意向执行对应工具，并启动倒计时监控话术。
 
-## Common Workflow
+## 工作流
 
 1. 从前端输入中提取客户信息：`customer_name`、`age`、`gender`、`behavior`。
 2. 调用 `intelligent_judgment` 获取 `intent_level`。
@@ -36,7 +36,7 @@ description: 万销销售场景编排技能。用于代理人在前端点击客�
 - **中意向**：10 秒，话术：`是否遇到理解困难？`
 - **低意向**：10 秒，话术：`内容是否符合您的要求？`
 
-## 绑定脚本与工具
+## 绑定mcp工具
 
 - 编排脚本：`scripts/run_wanxiao_sales_flow.py`
 - 涉及 MCP 工具：
@@ -50,8 +50,8 @@ description: 万销销售场景编排技能。用于代理人在前端点击客�
   - `periodic_care_tool`
   - `diagnose_stuck_point`
 - 默认服务地址：
-  - 销售场景服务：`http://127.0.0.1:8765`
-  - 倒计时监控服务：`http://127.0.0.1:8766`
+  - 销售场景服务：`http://127.0.0.1:8000`
+  - 倒计时监控服务：`http://127.0.0.1:8001`
 
 ### Basic Usage
 
@@ -93,3 +93,5 @@ python ./skills/万销销售场景/scripts/run_wanxiao_sales_flow.py "王五" --
 - 输出必须包含：`intent_level`、`route_tools`、`countdown`。
 - 每个工具结果优先使用 `structuredContent`。
 - 失败时返回 `status=error` 与明确错误信息（连接失败、参数缺失、调用超时）。
+
+

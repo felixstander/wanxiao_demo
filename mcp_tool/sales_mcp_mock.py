@@ -1,6 +1,8 @@
 import argparse
+import csv
 import os
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -10,50 +12,49 @@ import uvicorn
 mcp = FastMCP("SalesScenarioMockTools")
 
 
-CUSTOMER_DB: dict[str, dict[str, Any]] = {
-    "张三": {
-        "age": 35,
-        "gender": "男",
-        "behaviors": ["多次查看出单链接", "查看重疾产品详情", "咨询报销范围"],
-        "viewed_issue_link_count": 5,
-        "viewed_products": ["守护重疾Pro", "全家医疗Plus", "安心意外Max"],
-        "consulted_products": ["守护重疾Pro", "全家医疗Plus"],
-        "claim_count": 1,
-        "reimbursed_diseases": ["甲状腺结节"],
-        "family_structure": "已婚一孩",
-        "annual_income": 280000,
-        "city": "上海",
-        "birthday": "03-18",
-    },
-    "李四": {
-        "age": 42,
-        "gender": "女",
-        "behaviors": ["浏览产品对比页", "多次查看理赔案例", "未点击立即购买"],
-        "viewed_issue_link_count": 2,
-        "viewed_products": ["臻选医疗VIP", "守护重疾Pro"],
-        "consulted_products": ["臻选医疗VIP"],
-        "claim_count": 2,
-        "reimbursed_diseases": ["乳腺结节", "胆囊炎"],
-        "family_structure": "已婚二孩",
-        "annual_income": 360000,
-        "city": "杭州",
-        "birthday": "10-06",
-    },
-    "王五": {
-        "age": 28,
-        "gender": "男",
-        "behaviors": ["第一次点击咨询", "询问基础概念", "收藏了保险科普海报"],
-        "viewed_issue_link_count": 0,
-        "viewed_products": ["轻松医疗基础版"],
-        "consulted_products": ["轻松医疗基础版"],
-        "claim_count": 0,
-        "reimbursed_diseases": [],
-        "family_structure": "单身",
-        "annual_income": 140000,
-        "city": "南京",
-        "birthday": "12-24",
-    },
+CUSTOMER_CSV_PATH = Path(__file__).resolve().parent.parent / "data" / "customer_db.csv"
+LIST_FIELDS = {
+    "behaviors",
+    "viewed_products",
+    "consulted_products",
+    "reimbursed_diseases",
 }
+INT_FIELDS = {"age", "viewed_issue_link_count", "claim_count", "annual_income"}
+
+
+def _parse_list_field(raw_value: str) -> list[str]:
+    if not raw_value:
+        return []
+    return [item.strip() for item in raw_value.split("|") if item.strip()]
+
+
+def _load_customer_db_from_csv(csv_path: Path) -> dict[str, dict[str, Any]]:
+    customer_db: dict[str, dict[str, Any]] = {}
+    with csv_path.open("r", encoding="utf-8", newline="") as csv_file:
+        reader = csv.DictReader(csv_file)
+        for row in reader:
+            customer_name = (row.get("name") or "").strip()
+            if not customer_name:
+                continue
+
+            customer_profile: dict[str, Any] = {}
+            for field_name, value in row.items():
+                if field_name == "name":
+                    continue
+                raw_value = (value or "").strip()
+                if field_name in LIST_FIELDS:
+                    customer_profile[field_name] = _parse_list_field(raw_value)
+                elif field_name in INT_FIELDS:
+                    customer_profile[field_name] = int(raw_value) if raw_value else 0
+                else:
+                    customer_profile[field_name] = raw_value
+
+            customer_db[customer_name] = customer_profile
+
+    return customer_db
+
+
+CUSTOMER_DB: dict[str, dict[str, Any]] = _load_customer_db_from_csv(CUSTOMER_CSV_PATH)
 
 
 PRODUCT_CATALOG: dict[str, dict[str, Any]] = {
@@ -320,43 +321,26 @@ def _nearest_festival(today: date) -> dict[str, Any]:
 @mcp.tool()
 def intelligent_judgment(
     customer_name: str,
-    age: int | None = None,
-    behavior: str | None = None,
-    viewed_issue_link_count: int | None = None,
 ) -> dict[str, Any]:
     """根据客户基础信息与行为数据判断当前销售意愿等级。
 
     参数:
         customer_name: 客户姓名。
-        age: 客户年龄，可选。
-        behavior: 临时追加的一条行为描述，可选。
-        viewed_issue_link_count: 出单链接查看次数，可选。
 
     返回:
         dict[str, Any]: 包含判断状态、意愿分数、意向等级与推荐下一步工具。
     """
     customer = _resolve_customer(customer_name)
-    if customer is None and (age is None or behavior is None):
+    if customer is None:
         return {
             "status": "error",
-            "message": "未找到客户，且缺少 age/behavior 入参，无法进行意愿判断",
+            "message": "未找到客户，请先在 data/customer_db.csv 中维护该客户后再调用",
             "data": None,
         }
 
-    if customer is None:
-        behaviors = [behavior] if behavior else []
-        viewed_count = viewed_issue_link_count or 0
-        inferred_age = age or 30
-    else:
-        behaviors = list(customer["behaviors"])
-        if behavior:
-            behaviors.append(behavior)
-        viewed_count = (
-            viewed_issue_link_count
-            if viewed_issue_link_count is not None
-            else customer["viewed_issue_link_count"]
-        )
-        inferred_age = age if age is not None else customer["age"]
+    behaviors = list(customer["behaviors"])
+    viewed_count = customer["viewed_issue_link_count"]
+    inferred_age = customer["age"]
 
     score = _behavior_score(behaviors, viewed_count)
     if inferred_age >= 40:
@@ -394,29 +378,47 @@ def intelligent_judgment(
 @mcp.tool()
 def issue_policy_tool(
     customer_name: str,
-    age: int,
-    gender: str,
-    claim_count: int,
-    reimbursed_diseases: list[str],
 ) -> dict[str, Any]:
     """基于客户画像与风险因子生成报价结果并返回出单页面配置。
 
     参数:
         customer_name: 客户姓名。
-        age: 客户年龄。
-        gender: 客户性别，仅支持男/女。
-        claim_count: 历史出险次数。
-        reimbursed_diseases: 历史报销疾病列表。
 
     返回:
         dict[str, Any]: 包含保费测算结果、保费拆解、推荐产品与页面元素。
     """
-    if gender not in {"男", "女"}:
+    customer = _resolve_customer(customer_name)
+    if customer is None:
+        return {
+            "status": "error",
+            "message": "未找到客户，请先在 data/customer_db.csv 中维护该客户后再调用",
+            "data": None,
+        }
+
+    resolved_age = customer.get("age")
+    resolved_gender = customer.get("gender")
+    resolved_claim_count = customer.get("claim_count")
+    resolved_reimbursed_diseases = customer.get("reimbursed_diseases")
+
+    if resolved_age is None or resolved_gender is None or resolved_claim_count is None:
+        return {
+            "status": "error",
+            "message": "客户画像缺少出单所需字段（age/gender/claim_count）",
+            "data": None,
+        }
+
+    if resolved_gender not in {"男", "女"}:
         return {
             "status": "error",
             "message": "gender 仅支持 '男' 或 '女'",
             "data": None,
         }
+
+    resolved_diseases = (
+        resolved_reimbursed_diseases
+        if isinstance(resolved_reimbursed_diseases, list)
+        else []
+    )
 
     judgment = intelligent_judgment(customer_name)
     intent_level = "中意向"
@@ -424,10 +426,10 @@ def issue_policy_tool(
         intent_level = judgment["data"]["intent_level"]
 
     base_premium = 1200
-    age_factor = _age_factor(age)
-    gender_factor = _gender_factor(gender)
-    claims_factor = min(1.0 + claim_count * 0.09, 1.45)
-    disease_factor = _disease_risk_factor(reimbursed_diseases)
+    age_factor = _age_factor(int(resolved_age))
+    gender_factor = _gender_factor(str(resolved_gender))
+    claims_factor = min(1.0 + int(resolved_claim_count) * 0.09, 1.45)
+    disease_factor = _disease_risk_factor(resolved_diseases)
     intent_factor = _intent_adjustment(intent_level)
 
     annual_premium = round(
@@ -441,7 +443,7 @@ def issue_policy_tool(
     )
 
     monthly_premium = round(annual_premium / 12, 2)
-    recommended_products = _recommend_products_by_age(age)
+    recommended_products = _recommend_products_by_age(int(resolved_age))
     quote_products = [
         {
             "name": name,
@@ -458,7 +460,7 @@ def issue_policy_tool(
         "action": "render_quote_page",
         "page_url": (
             "https://mock-insurance.com/quote"
-            f"?user={customer_name}&age={age}&gender={gender}&annual_premium={annual_premium}"
+            f"?user={customer_name}&age={resolved_age}&gender={resolved_gender}&annual_premium={annual_premium}"
         ),
         "quote": {
             "customer_name": customer_name,
@@ -474,10 +476,10 @@ def issue_policy_tool(
                 "intent_factor": intent_factor,
             },
             "input_features": {
-                "age": age,
-                "gender": gender,
-                "claim_count": claim_count,
-                "reimbursed_diseases": reimbursed_diseases,
+                "age": resolved_age,
+                "gender": resolved_gender,
+                "claim_count": resolved_claim_count,
+                "reimbursed_diseases": resolved_diseases,
             },
             "recommended_products": quote_products,
         },
@@ -488,19 +490,24 @@ def issue_policy_tool(
 @mcp.tool()
 def product_comparison_tool(
     customer_name: str,
-    viewed_products: list[str] | None = None,
 ) -> dict[str, Any]:
     """根据客户浏览记录输出产品对比结果。
 
     参数:
         customer_name: 客户姓名。
-        viewed_products: 外部指定的待对比产品列表，可选。
 
     返回:
         dict[str, Any]: 包含产品对比表与推荐沟通话术。
     """
     customer = _resolve_customer(customer_name)
-    products = viewed_products or (customer["viewed_products"] if customer else [])
+    if customer is None:
+        return {
+            "status": "error",
+            "message": "未找到客户，请先在 data/customer_db.csv 中维护该客户后再调用",
+            "data": None,
+        }
+
+    products = customer["viewed_products"]
     if len(products) < 2:
         products = ["全家医疗Plus", "守护重疾Pro"]
 
@@ -533,23 +540,43 @@ def product_comparison_tool(
 @mcp.tool()
 def claim_case_tool(
     customer_name: str,
-    age: int,
-    reimbursed_diseases: list[str],
 ) -> dict[str, Any]:
     """基于年龄和疾病信息匹配理赔案例并返回展示数据。
 
     参数:
         customer_name: 客户姓名。
-        age: 客户年龄。
-        reimbursed_diseases: 历史报销疾病列表。
 
     返回:
         dict[str, Any]: 包含匹配案例数量、案例详情与沟通建议。
     """
+    customer = _resolve_customer(customer_name)
+    if customer is None:
+        return {
+            "status": "error",
+            "message": "未找到客户，请先在 data/customer_db.csv 中维护该客户后再调用",
+            "data": None,
+        }
+
+    resolved_age = customer.get("age")
+    resolved_reimbursed_diseases = customer.get("reimbursed_diseases")
+
+    if resolved_age is None:
+        return {
+            "status": "error",
+            "message": "客户画像缺少理赔案例匹配所需字段（age）",
+            "data": None,
+        }
+
+    diseases = (
+        resolved_reimbursed_diseases
+        if isinstance(resolved_reimbursed_diseases, list)
+        else []
+    )
+
     matched_cases: list[dict[str, Any]] = []
     for item in CLAIM_CASE_DB:
-        disease_hit = item["disease"] in reimbursed_diseases
-        age_hit = item["age_min"] <= age <= item["age_max"]
+        disease_hit = item["disease"] in diseases
+        age_hit = item["age_min"] <= int(resolved_age) <= item["age_max"]
         if disease_hit or age_hit:
             matched_cases.append(item)
 
@@ -581,46 +608,61 @@ def claim_case_tool(
 @mcp.tool()
 def personal_needs_analysis_tool(
     customer_name: str,
-    age: int,
-    annual_income: int,
-    family_structure: str,
-    existing_insurance_budget: int = 0,
 ) -> dict[str, Any]:
     """根据家庭结构和收入水平输出个人保障需求分析。
 
     参数:
         customer_name: 客户姓名。
-        age: 客户年龄。
-        annual_income: 年收入。
-        family_structure: 家庭结构描述。
-        existing_insurance_budget: 已有保险预算，默认 0。
 
     返回:
         dict[str, Any]: 包含推荐预算、保障重点与产品组合建议。
     """
-    gross_budget = int(annual_income * 0.1)
+    customer = _resolve_customer(customer_name)
+    if customer is None:
+        return {
+            "status": "error",
+            "message": "未找到客户，请先在 data/customer_db.csv 中维护该客户后再调用",
+            "data": None,
+        }
+
+    resolved_age = customer.get("age")
+    resolved_annual_income = customer.get("annual_income")
+    resolved_family_structure = customer.get("family_structure")
+
+    if (
+        resolved_age is None
+        or resolved_annual_income is None
+        or resolved_family_structure is None
+    ):
+        return {
+            "status": "error",
+            "message": "客户画像缺少需求分析所需字段（age/annual_income/family_structure）",
+            "data": None,
+        }
+
+    gross_budget = int(int(resolved_annual_income) * 0.1)
+    existing_insurance_budget = 0
     recommended_budget = max(gross_budget - existing_insurance_budget, 1200)
     budget_monthly = round(recommended_budget / 12, 2)
 
-    has_children = "孩" in family_structure
-    has_spouse = "已婚" in family_structure
+    has_children = "孩" in str(resolved_family_structure)
+    has_spouse = "已婚" in str(resolved_family_structure)
 
     demand_focus = ["医疗保障", "重大疾病保障"]
     if has_children:
         demand_focus.append("家庭责任保障")
-    if age >= 40:
+    if int(resolved_age) >= 40:
         demand_focus.append("心脑血管风险保障")
     if not has_spouse and not has_children:
         demand_focus.append("高杠杆意外保障")
 
-    recommended_products = _recommend_products_by_age(age)
+    recommended_products = _recommend_products_by_age(int(resolved_age))
     portfolio = [
         {
             "product": p,
             "allocation_ratio": 0.5 if idx == 0 else 0.3 if idx == 1 else 0.2,
             "estimated_budget": round(
-                recommended_budget
-                * (0.5 if idx == 0 else 0.3 if idx == 1 else 0.2),
+                recommended_budget * (0.5 if idx == 0 else 0.3 if idx == 1 else 0.2),
                 2,
             ),
             "coverage_scope": PRODUCT_CATALOG[p]["coverage_scope"],
@@ -633,9 +675,9 @@ def personal_needs_analysis_tool(
         "tool_name": "personal_needs_analysis_tool",
         "customer_name": customer_name,
         "analysis": {
-            "annual_income": annual_income,
-            "family_structure": family_structure,
-            "age": age,
+            "annual_income": resolved_annual_income,
+            "family_structure": resolved_family_structure,
+            "age": resolved_age,
             "recommended_annual_budget": recommended_budget,
             "recommended_monthly_budget": budget_monthly,
             "demand_focus": demand_focus,
@@ -681,19 +723,24 @@ def nurturing_process_tools(customer_name: str) -> dict[str, Any]:
 @mcp.tool()
 def product_knowledge_share_tool(
     customer_name: str,
-    consulted_products: list[str] | None = None,
 ) -> dict[str, Any]:
     """根据客户历史咨询产品生成科普知识卡片。
 
     参数:
         customer_name: 客户姓名。
-        consulted_products: 指定咨询产品列表，可选。
 
     返回:
         dict[str, Any]: 包含知识卡片、文章标题与海报素材地址。
     """
     customer = _resolve_customer(customer_name)
-    products = consulted_products or (customer["consulted_products"] if customer else [])
+    if customer is None:
+        return {
+            "status": "error",
+            "message": "未找到客户，请先在 data/customer_db.csv 中维护该客户后再调用",
+            "data": None,
+        }
+
+    products = customer["consulted_products"]
     if not products:
         products = ["全家医疗Plus"]
 
@@ -755,24 +802,29 @@ def agent_ai_business_card_tool(
 @mcp.tool()
 def periodic_care_tool(
     customer_name: str,
-    city: str | None = None,
-    upcoming_event: str | None = None,
 ) -> dict[str, Any]:
     """基于节日与城市信息生成定期关怀文案和保障建议。
 
     参数:
         customer_name: 客户姓名。
-        city: 客户城市，可选。
-        upcoming_event: 指定节日名称，可选。
 
     返回:
         dict[str, Any]: 包含关怀文案、关联产品与下次触达建议。
     """
     customer = _resolve_customer(customer_name)
-    city_name = city or (customer["city"] if customer else "上海")
-    festival = {"name": upcoming_event} if upcoming_event else _nearest_festival(date.today())
+    if customer is None:
+        return {
+            "status": "error",
+            "message": "未找到客户，请先在 data/customer_db.csv 中维护该客户后再调用",
+            "data": None,
+        }
 
-    care_hint = CITY_CARE_HINTS.get(city_name, "近期注意出行安全与天气变化，建议完善意外与医疗保障。")
+    city_name = customer["city"]
+    festival = _nearest_festival(date.today())
+
+    care_hint = CITY_CARE_HINTS.get(
+        city_name, "近期注意出行安全与天气变化，建议完善意外与医疗保障。"
+    )
     event_name = festival["name"]
     travel_risk = festival.get("travel_risk", "节假日出行与天气变化风险增加")
 
@@ -828,53 +880,6 @@ def deep_guidance_tools(customer_name: str) -> dict[str, Any]:
     }
 
 
-@mcp.tool()
-def diagnose_stuck_status(
-    current_tool_id: str,
-    elapsed_seconds: int,
-    customer_intent: str,
-) -> dict[str, Any]:
-    """根据停留时长与意愿阶段识别卡点并给出下一步动作。
-
-    参数:
-        current_tool_id: 当前工具 ID。
-        elapsed_seconds: 当前停留时长（秒）。
-        customer_intent: 客户意向等级。
-
-    返回:
-        dict[str, Any]: 包含诊断类型、触发动作与建议下一步工具。
-    """
-    if current_tool_id == "issue_policy_tool" and elapsed_seconds >= 30:
-        return {
-            "diagnosis": "出单卡顿",
-            "trigger_action": "show_assist_card",
-            "message": "报价页停留超过30秒，可推送保费构成解释",
-            "next_step": "调用 personal_needs_analysis_tool",
-        }
-
-    if elapsed_seconds >= 120:
-        return {
-            "diagnosis": "理解困难/阅读时间过长",
-            "trigger_action": "show_assist_card",
-            "message": f"页面停留 {elapsed_seconds // 60} 分钟，建议切换简版解读",
-            "next_step": "调用 product_knowledge_share_tool",
-        }
-
-    if customer_intent in {"中意向", "低意向"} and elapsed_seconds >= 60:
-        return {
-            "diagnosis": "培育期犹豫",
-            "trigger_action": "recommend_tool",
-            "message": "客户在犹豫，优先推送理赔案例建立信任",
-            "next_step": "调用 claim_case_tool",
-        }
-
-    return {
-        "diagnosis": "正常操作中",
-        "trigger_action": "none",
-        "message": "继续监控",
-    }
-
-
 def create_sse_app(mount_path: str) -> Any:
     """创建用于 SSE 传输的 MCP ASGI 应用。
 
@@ -896,7 +901,9 @@ def parse_cli_args() -> argparse.Namespace:
     返回:
         argparse.Namespace: 包含 host、port、mount_path、log_level 四个字段。
     """
-    parser = argparse.ArgumentParser(description="Run SalesScenarioMockTools MCP server with SSE via uvicorn")
+    parser = argparse.ArgumentParser(
+        description="Run SalesScenarioMockTools MCP server with SSE via uvicorn"
+    )
     parser.add_argument(
         "--host",
         default=os.getenv("MCP_HOST", "127.0.0.1"),

@@ -5,6 +5,7 @@ class ChatApp {
     this.sendButton = document.getElementById("sendButton");
     this.processLogs = document.getElementById("processLogs");
     this.skillsList = document.getElementById("skillsList");
+    this.customerList = document.getElementById("customerList");
     this.shortMemoryContent = document.getElementById("shortMemoryContent");
     this.longMemoryContent = document.getElementById("longMemoryContent");
     this.memoryUpdatedAt = document.getElementById("memoryUpdatedAt");
@@ -27,6 +28,7 @@ class ChatApp {
       }
     });
 
+    this.loadCustomers();
     this.loadSkills();
     this.loadMemories({ force: true });
     this.startMemoryMonitor();
@@ -262,6 +264,66 @@ class ChatApp {
       item.className = "skill-item muted";
       item.textContent = `技能包加载失败: ${reason}`;
       this.skillsList.appendChild(item);
+    }
+  }
+
+  async loadCustomers() {
+    if (!this.customerList) {
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/customers");
+      if (!response.ok) {
+        throw new Error(`Request failed (${response.status})`);
+      }
+
+      const payload = await response.json();
+      const customers = Array.isArray(payload.customers) ? payload.customers : [];
+      this.renderCustomers(customers);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.customerList.innerHTML = "";
+      const item = document.createElement("div");
+      item.className = "customer-card muted";
+      item.textContent = `客户信息加载失败: ${reason}`;
+      this.customerList.appendChild(item);
+    }
+  }
+
+  renderCustomers(customers) {
+    if (!this.customerList) {
+      return;
+    }
+
+    this.customerList.innerHTML = "";
+    if (!customers.length) {
+      const item = document.createElement("div");
+      item.className = "customer-card muted";
+      item.textContent = "暂无客户信息";
+      this.customerList.appendChild(item);
+      return;
+    }
+
+    for (const customer of customers) {
+      const card = document.createElement("div");
+      card.className = "customer-card";
+
+      const name =
+        typeof customer.name === "string" && customer.name ? customer.name : "未知客户";
+      const age = typeof customer.age === "string" && customer.age ? customer.age : "--";
+      const gender =
+        typeof customer.gender === "string" && customer.gender ? customer.gender : "--";
+      const behavior =
+        typeof customer.behavior === "string" && customer.behavior ? customer.behavior : "--";
+
+      card.innerHTML =
+        `<div class="customer-name">${this.escapeHtml(name)}</div>` +
+        `<div class="customer-field"><span>年龄</span><strong>${this.escapeHtml(age)}</strong></div>` +
+        `<div class="customer-field"><span>性别</span><strong>${this.escapeHtml(gender)}</strong></div>` +
+        `<div class="customer-field behavior"><span>行为</span><strong>${this.escapeHtml(behavior)}</strong></div>`;
+
+      this.customerList.appendChild(card);
     }
   }
 
