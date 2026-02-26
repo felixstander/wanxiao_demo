@@ -11,6 +11,7 @@ models:
   main:
     env: OPENROUTER_MODEL
     default: z-ai/glm-4.7-flash
+    # default: z-ai/glm-5
   memory_agent:
     env: OPENROUTER_MEMORY_MODEL
     default: z-ai/glm-4.7-flash

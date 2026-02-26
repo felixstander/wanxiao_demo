@@ -21,4 +21,7 @@ dependencies = [
     "uvicorn>=0.40.0",
     "mcp>=1.26.0",
     "langchain-daytona>=0.0.2",
+    "e2b>=2.14.0",
+    "e2b-code-interpreter>=2.4.1",
+    "daytona>=0.146.0",
 ]
