@@ -10,8 +10,7 @@ from typing import Any, AsyncIterator
 
 import uvicorn
 from deepagents import create_deep_agent
-from deepagents.backends import (CompositeBackend, FilesystemBackend,
-                                 StateBackend, StoreBackend)
+from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -92,16 +91,25 @@ def _ensure_memory_files(today: date) -> tuple[str, str]:
 
 
 def build_agent() -> Any:
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    # api_key = os.getenv("OPENROUTER_API_KEY")
+    api_key = os.getenv("GLM_API_KEY")
+    # if not api_key:
+    #     raise RuntimeError("OPENROUTER_API_KEY is missing. Please set it in .env")
+    #
     if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is missing. Please set it in .env")
+        raise RuntimeError("GLM_API_KEY is missing. Please set it in .env")
 
     os.environ["OPENAI_API_KEY"] = api_key
 
+    # llm = ChatOpenAI(
+    #     model=model_name,
+    #     base_url="https://openrouter.ai/api/v1",
+    #     # temperature=0.2,
+    # )
     llm = ChatOpenAI(
         model=model_name,
-        base_url="https://openrouter.ai/api/v1",
-        # temperature=0.2,
+        base_url="https://open.bigmodel.cn/api/paas/v4",
+        temperature=0.1,
     )
 
     skills_dir = PROJECT_ROOT / "skills"

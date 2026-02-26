@@ -7,8 +7,13 @@ from typing import Any
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
-mcp = FastMCP("SalesActivityMonitor")
+# 创建 FastMCP 实例，禁用 DNS rebinding protection 以支持 ngrok 转发
+mcp = FastMCP(
+    "SalesActivityMonitor",
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+)
 
 # 全局内存存储：管理倒计时任务状态
 _countdown_tasks: dict[str, dict] = {}

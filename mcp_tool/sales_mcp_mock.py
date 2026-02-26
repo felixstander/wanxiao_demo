@@ -7,8 +7,13 @@ from typing import Any
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
-mcp = FastMCP("SalesScenarioMockTools")
+mcp = FastMCP(
+    "SalesScenarioMockTools",
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+)
+
 
 
 CUSTOMER_CSV_PATH = Path(__file__).resolve().parent.parent / "data" / "customer_db.csv"
