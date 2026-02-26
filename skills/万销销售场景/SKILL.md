@@ -42,35 +42,35 @@ description: 万销客户阶段判断与需求分析技能。用于代理人输�
 
 ### Basic Usage
 
-如果虚拟环境已激活：
+如果沙箱环境已激活：
 
 ```bash
 # 智能判断客户意向
-.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py intelligent_judgment --customer-name "张三" --base-url "http://127.0.0.1:8000"
+python ./skills/万销销售场景/scripts/call_sales_mcp.py intelligent_judgment --customer-name "张三" --base-url "http://127.0.0.1:8000"
 
 # 出单工具
-.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py issue_policy_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+python ./skills/万销销售场景/scripts/call_sales_mcp.py issue_policy_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
 
 # 产品对比
-.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py product_comparison_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+python ./skills/万销销售场景/scripts/call_sales_mcp.py product_comparison_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
 
 # 理赔案例
-.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py claim_case_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+python ./skills/万销销售场景/scripts/call_sales_mcp.py claim_case_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
 
 # 个人需求分析
-.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py personal_needs_analysis_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+python ./skills/万销销售场景/scripts/call_sales_mcp.py personal_needs_analysis_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
 
 # 产品知识分享
-.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py product_knowledge_share_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+python ./skills/万销销售场景/scripts/call_sales_mcp.py product_knowledge_share_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
 
 # 代理人AI名片
-.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py agent_ai_business_card_tool --agent-name "金牌顾问小安" --specialty "医疗险+重疾险组合规划" --base-url "http://127.0.0.1:8000"
+python ./skills/万销销售场景/scripts/call_sales_mcp.py agent_ai_business_card_tool --agent-name "金牌顾问小安" --specialty "医疗险+重疾险组合规划" --base-url "http://127.0.0.1:8000"
 
 # 定期关怀
-.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py periodic_care_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+python ./skills/万销销售场景/scripts/call_sales_mcp.py periodic_care_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
 
 # 深度引导工具
-.venv/bin/python ./skills/万销销售场景/scripts/call_sales_mcp.py deep_guidance_tools --customer-name "张三" --base-url "http://127.0.0.1:8000"
+python ./skills/万销销售场景/scripts/call_sales_mcp.py deep_guidance_tools --customer-name "张三" --base-url "http://127.0.0.1:8000"
 ```
 
 如果直接使用系统 Python（未激活虚拟环境）：
