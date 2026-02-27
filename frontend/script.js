@@ -187,6 +187,8 @@ class ChatApp {
     const lines = withPlaceholders.split("\n");
     const html = [];
     let inList = false;
+    let inTable = false;
+    let tableRows = [];
 
     const closeList = () => {
       if (inList) {
@@ -195,18 +197,91 @@ class ChatApp {
       }
     };
 
+    const closeTable = () => {
+      if (inTable && tableRows.length > 1) { // 至少需要表头+一行数据
+        // 第一行是表头
+        const headerRow = tableRows[0];
+        // 找到分隔符行的位置
+        let separatorIndex = -1;
+        for (let i = 1; i < tableRows.length; i++) {
+          if (tableRows[i].length === 0) {
+            separatorIndex = i;
+            break;
+          }
+        }
+        // 数据行在分隔符之后
+        const bodyRows = separatorIndex > 0 ? tableRows.slice(separatorIndex + 1) : tableRows.slice(1);
+
+        let tableHtml = "<table><thead><tr>";
+        headerRow.forEach((cell) => {
+          tableHtml += `<th>${this.formatMarkdownInline(cell)}</th>`;
+        });
+        tableHtml += "</tr></thead><tbody>";
+
+        bodyRows.forEach((row) => {
+          if (row.length > 0) {
+            tableHtml += "<tr>";
+            row.forEach((cell) => {
+              tableHtml += `<td>${this.formatMarkdownInline(cell)}</td>`;
+            });
+            tableHtml += "</tr>";
+          }
+        });
+        tableHtml += "</tbody></table>";
+
+        html.push(tableHtml);
+      }
+      inTable = false;
+      tableRows = [];
+    };
+
     for (const rawLine of lines) {
       const line = rawLine.trimEnd();
       const tokenMatch = line.match(/^@@CODEBLOCK_(\d+)@@$/);
       if (tokenMatch) {
         closeList();
+        closeTable();
         html.push(`@@CODEBLOCK_${tokenMatch[1]}@@`);
         continue;
       }
 
+      // 如果是空行，检查是否在表格中
       if (!line.trim()) {
+        // 如果在表格中，跳过空行（允许表格行之间有空行）
+        if (inTable) {
+          continue;
+        }
         closeList();
         continue;
+      }
+      // 检测表格行: | cell1 | cell2 | cell3 |
+      const tableMatch = line.match(/^\|(.+)\|$/);
+      if (tableMatch) {
+        // 解析单元格（按 | 分割，去除首尾空格）
+        const cells = tableMatch[1]
+          .split("|")
+          .map((cell) => cell.trim())
+          .filter((cell) => cell.length > 0);
+
+        if (cells.length > 0) {
+          // 检测是否为分隔符行 (|---|---|---|)
+          const isSeparator = cells.every((cell) => /^[-:]+[-\s:|]*$/.test(cell));
+
+          if (!isSeparator) {
+            closeList();
+            inTable = true;
+            tableRows.push(cells);
+          } else if (inTable) {
+            // 这是分隔符行，记录但不输出
+            tableRows.push([]); // 占位符
+          }
+          continue;
+        }
+      }
+
+      // 如果不是表格行但有正在构建的表格，先关闭表格
+      if (inTable) {
+        closeTable();
       }
 
       const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
@@ -232,16 +307,43 @@ class ChatApp {
     }
 
     closeList();
+    closeTable();
+
     let rendered = html.join("");
     rendered = rendered.replace(/@@CODEBLOCK_(\d+)@@/g, (_, idx) => codeBlocks[Number(idx)] || "");
     return rendered;
   }
-
   formatMarkdownInline(text) {
     return text
       .replace(/`([^`]+)`/g, "<code>$1</code>")
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-      .replace(/==([^=]+)==/g, "<mark>$1</mark>");
+      .replace(/==([^=]+)==/g, "<mark>$1</mark>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+      .replace(/~~([^~]+)~~/g, "<del>$1</del>")
+      .replace(/__([^_]+)__/g, "<strong>$1</strong>");
+  }
+
+  isMarkdown(text) {
+    if (typeof text !== "string" || !text) return false;
+    // 检测常见的 Markdown 语法特征
+    const markdownPatterns = [
+      /^#{1,6}\s+/m,           // 标题 # ## ###
+      /^[-*+]\s+/m,            // 无序列表 - * +
+      /^\d+\.\s+/m,            // 有序列表 1. 2.
+      /\*\*[^*]+\*\*/,         // 粗体 **text**
+      /\*[^*]+\*/,             // 斜体 *text*
+      /`[^`]+`/,               // 行内代码 `code`
+      /```[\s\S]*?```/,        // 代码块
+      /\[[^\]]+\]\([^)]+\)/,  // 链接 [text](url)
+      /!\[[^\]]*\]\([^)]+\)/, // 图片 ![alt](url)
+      /^>\s+/m,                // 引用 >
+      /~~[^~]+~~/,             // 删除线 ~~text~~
+      /==[^=]+==/,             // 高亮 ==text==
+      /^\|.*\|$/m,             // 表格 | col1 | col2 |
+      /^-{3,}$/m,              // 水平线 ---
+      /^\*\*\*+$/m,            // 水平线 ***
+    ];
+    return markdownPatterns.some((pattern) => pattern.test(text));
   }
 
   async loadSkills() {
@@ -561,15 +663,24 @@ class ChatApp {
     const loadingDots = contentWrap.querySelector(".loading-dots");
     if (loadingDots) {
       loadingDots.remove();
-      const p = document.createElement("p");
-      p.textContent = content;
-      contentWrap.appendChild(p);
-    } else {
-      const p = contentWrap.querySelector("p");
-      if (p) {
-        p.textContent = content;
-      }
     }
+
+    // 检测是否为 Markdown 格式
+    const isMarkdownContent = this.isMarkdown(content);
+
+    if (isMarkdownContent) {
+      // Markdown 内容：使用 innerHTML 渲染富文本
+      contentWrap.innerHTML = `<div class="markdown-content">${this.renderMarkdownToHtml(content)}</div>`;
+    } else {
+      // 非 Markdown 内容：使用 textContent 保持纯文本
+      let p = contentWrap.querySelector("p");
+      if (!p) {
+        p = document.createElement("p");
+        contentWrap.appendChild(p);
+      }
+      p.textContent = content;
+    }
+
     this.scrollToBottom();
   }
 

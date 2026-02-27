@@ -149,8 +149,62 @@ prompts/memory_agent.md
   - `regex`：正则过滤规则
 - 运行时总开关：`OUTPUT_SANITIZE_ENABLED=0/1`
 
-## Milvus Lite 记忆检索脚本
+## 文件自动同步（Daytona 沙箱）
+应用支持将本地 `skills/`、`data/`、`memories/` 文件夹的变更**自动同步**到 Daytona 沙箱，无需重启应用。
 
+### 工作原理
+
+- **自动监听**：应用启动后，使用 `watchdog` 库监视三个文件夹的变更
+- **防抖机制**：变更发生后等待 2 秒（可配置），期间如有新变更则重置计时器
+- **增量同步**：只上传变更的文件，保留沙箱中其他文件
+- **自动清理**：应用退出时自动停止监听器
+
+### 环境变量配置
+
+```bash
+# 禁用文件监听（默认启用）
+FILE_WATCH_ENABLED=0 uv run python main.py
+
+# 调整防抖时间（默认 2.0 秒）
+FILE_WATCH_DEBOUNCE=5.0 uv run python main.py
+```
+
+### 手动同步 API
+
+如需手动触发同步（例如临时禁用自动监听时）：
+
+```bash
+# 触发同步
+curl -X POST http://localhost:7860/api/sync
+
+# 返回示例
+{
+  "status": "success",
+  "message": "文件夹同步完成",
+  "synced_folders": ["skills", "data", "memories"]
+}
+```
+
+### 工作流程
+
+```
+修改本地文件（skills/data/memories）
+           ↓
+    文件监听器检测到变更
+           ↓
+    防抖等待 2 秒（可配置）
+           ↓
+    自动同步到 Daytona 沙箱
+           ↓
+    Agent 立即使用最新文件
+```
+
+### 注意事项
+
+- 首次启动时会自动安装 `watchdog` 依赖（已添加到 `pyproject.toml`）
+- 隐藏文件（以 `.` 开头）、临时文件、`__pycache__` 等会被自动忽略
+- 如果沙箱未初始化（如启动失败），自动监听将不会启动
+## Milvus Lite 记忆检索脚本
 新增脚本：`src/milvus_mem_search.py`
 
 - 数据源目录：`memories/daily/*.md`（仅匹配 `YYYY-MM-DD.md`）

@@ -1,32 +1,37 @@
 import csv
 import json
 import os
-import re
 import sys
 import threading
+import time
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+# Patch: 修改 read_file 默认读取行数限制为 500 行
+import deepagents.middleware.filesystem as _fs_module
 import uvicorn
+# 尝试导入 Daytona（如果未安装则给出友好提示）
+from daytona import CreateSandboxBaseParams, Daytona, FileUpload
 from deepagents import create_deep_agent
+
+_fs_module.DEFAULT_READ_LIMIT = 500
 from deepagents.backends import FilesystemBackend
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from langchain_daytona import DaytonaSandbox
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 from pydantic import BaseModel, Field
+from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
 
 from src.output_sanitize_config import load_output_sanitize_config
 from src.prompt_config import PromptConfig
-
-# 尝试导入 Daytona（如果未安装则给出友好提示）
-from daytona import CreateSandboxBaseParams, Daytona, FileUpload
-from langchain_daytona import DaytonaSandbox
 
 DAYTONA_AVAILABLE = True
 
@@ -43,12 +48,13 @@ LONG_TERM_FILE = MEMORIES_DIR / "MEMORY.md"
 DAYTONA_INSTANCE: Daytona | None = None
 DAYTONA_SANDBOX: Any | None = None
 
-load_dotenv()
-from src.output_sanitize_config import load_output_sanitize_config
-from src.prompt_config import PromptConfig
+# 文件监听器全局实例
+FILE_OBSERVER: Observer | None = None
+SYNC_DEBOUNCE_TIMER: threading.Timer | None = None
+SYNC_LOCK = threading.Lock()
 
-# 倒计时 MCP 服务配置
-COUNTDOWN_MCP_URL = os.getenv("COUNTDOWN_MCP_URL", "http://127.0.0.1:8765")
+load_dotenv()  # src modules already imported at lines 34-35
+
 
 PROMPTS = PromptConfig(PROJECT_ROOT)
 OUTPUT_SANITIZE_CONFIG = load_output_sanitize_config(
@@ -140,6 +146,208 @@ def _clear_sandbox_id():
         pass
 
 
+def sync_folders_to_sandbox(sandbox) -> None:
+    """将本地 skills、data、memories 文件夹同步到沙箱。
+
+    无论沙箱是新建的还是已存在的，都执行同步以确保沙箱中的文件是最新的。
+    """
+    print("\n🔄 正在同步本地文件夹到沙箱...")
+
+    # 上传 skills 文件夹
+    upload_skills_to_sandbox(sandbox, SKILLS_DIR, "/home/daytona/skills")
+
+    # 上传 data 文件夹
+    upload_directory_to_sandbox(
+        sandbox,
+        DATA_DIR,
+        "/home/daytona/data",
+        "data",
+    )
+
+    # 上传 memories 文件夹到沙箱（供 MemoryMiddleware 使用）
+    upload_directory_to_sandbox(
+        sandbox,
+        MEMORIES_DIR,
+        "/home/daytona/memories",
+        "memories",
+    )
+
+    # 验证上传
+    print("\n🔍 验证同步的文件...")
+    ls_result = sandbox.process.exec("find /home/daytona/skills -type f | head -10")
+    print(f"沙箱中的 skills 文件:\n{ls_result.result}")
+
+    # 验证 data 文件夹存在且包含 customer_db.csv
+    ls_data_result = sandbox.process.exec("ls -la /home/daytona/data")
+    print(f"\n沙箱中的 data 文件:\n{ls_data_result.result}")
+
+    # 检查 customer_db.csv 是否存在
+    check_csv = sandbox.process.exec(
+        "test -f /home/daytona/data/customer_db.csv && echo '✅ customer_db.csv 存在' || echo '❌ customer_db.csv 不存在'"
+    )
+    print(f"\n{check_csv.result}")
+
+    # 验证 memories 文件夹存在
+    ls_memories_result = sandbox.process.exec("ls -la /home/daytona/memories")
+    print(f"\n沙箱中的 memories 文件:\n{ls_memories_result.result}")
+
+    # 检查 MEMORY.md 是否存在
+    check_memory = sandbox.process.exec(
+        "test -f /home/daytona/memories/MEMORY.md && echo '✅ MEMORY.md 存在' || echo '❌ MEMORY.md 不存在'"
+    )
+    print(f"\n{check_memory.result}")
+
+    print("✅ 文件夹同步完成")
+    print("✅ 文件夹同步完成")
+
+
+class SandboxSyncHandler(FileSystemEventHandler):
+    """文件变更监听器，自动同步到 Daytona 沙箱。
+
+    使用防抖机制避免频繁变更导致频繁同步。
+    """
+
+    def __init__(self, debounce_seconds: float = 2.0):
+        """
+        参数:
+            debounce_seconds: 防抖时间（秒），在此时间内多次变更只触发一次同步
+        """
+        self.debounce_seconds = debounce_seconds
+        super().__init__()
+
+    def on_any_event(self, event):
+        """处理任何文件系统事件。"""
+        # 忽略目录事件和隐藏文件
+        if event.is_directory:
+            return
+
+        # 获取文件名
+        file_path = Path(event.src_path)
+
+        # 忽略隐藏文件和临时文件
+        if file_path.name.startswith(".") or file_path.name.endswith("~"):
+            return
+
+        # 忽略特定目录和文件类型
+        if self._should_ignore(file_path):
+            return
+
+        print(f"📁 检测到文件变更: {event.event_type} - {file_path}")
+        self._trigger_sync()
+
+    def _should_ignore(self, file_path: Path) -> bool:
+        """判断是否应该忽略该文件。"""
+        # 忽略 __pycache__、.git 等目录
+        ignore_dirs = {
+            "__pycache__",
+            ".git",
+            ".venv",
+            "venv",
+            "node_modules",
+            ".pytest_cache",
+        }
+        for part in file_path.parts:
+            if part in ignore_dirs:
+                return True
+
+        # 忽略特定扩展名
+        ignore_extensions = {".pyc", ".pyo", ".pyd", ".so", ".dylib"}
+        if file_path.suffix in ignore_extensions:
+            return True
+
+        return False
+
+    def _trigger_sync(self):
+        """触发同步（带防抖）。"""
+        global SYNC_DEBOUNCE_TIMER
+
+        with SYNC_LOCK:
+            # 取消之前的定时器
+            if SYNC_DEBOUNCE_TIMER is not None:
+                SYNC_DEBOUNCE_TIMER.cancel()
+
+            # 创建新的定时器
+            SYNC_DEBOUNCE_TIMER = threading.Timer(self.debounce_seconds, self._do_sync)
+            SYNC_DEBOUNCE_TIMER.start()
+
+    def _do_sync(self):
+        """执行实际同步。"""
+        global DAYTONA_SANDBOX, SYNC_DEBOUNCE_TIMER
+
+        try:
+            if DAYTONA_SANDBOX is not None:
+                print("\n🔄 [自动同步] 检测到文件变更，正在同步到沙箱...")
+                sync_folders_to_sandbox(DAYTONA_SANDBOX)
+                print("✅ [自动同步] 完成\n")
+        except Exception as e:
+            print(f"⚠️  [自动同步] 失败: {e}")
+        finally:
+            with SYNC_LOCK:
+                SYNC_DEBOUNCE_TIMER = None
+
+
+def start_file_watcher() -> None:
+    """启动文件监听器，监视 skills、data、memories 文件夹。
+
+    使用环境变量 FILE_WATCH_ENABLED 控制是否启用（默认启用）。
+    使用环境变量 FILE_WATCH_DEBOUNCE 控制防抖时间（默认 2.0 秒）。
+    """
+    global FILE_OBSERVER
+
+    # 检查是否启用文件监听
+    if not _env_flag("FILE_WATCH_ENABLED", default=True):
+        print("📁 文件监听已禁用（设置 FILE_WATCH_ENABLED=0 启用）")
+        return
+
+    # 获取防抖时间
+    debounce_str = os.getenv("FILE_WATCH_DEBOUNCE", "2.0")
+    try:
+        debounce_seconds = float(debounce_str)
+    except ValueError:
+        debounce_seconds = 2.0
+
+    # 创建监听器
+    observer = Observer()
+    handler = SandboxSyncHandler(debounce_seconds=debounce_seconds)
+
+    # 监视的文件夹
+    watch_dirs = [
+        (SKILLS_DIR, "skills"),
+        (DATA_DIR, "data"),
+        (MEMORIES_DIR, "memories"),
+    ]
+
+    for dir_path, label in watch_dirs:
+        if dir_path.exists():
+            observer.schedule(handler, str(dir_path), recursive=True)
+            print(f"📁 开始监视 {label} 文件夹: {dir_path}")
+        else:
+            print(f"⚠️  {label} 文件夹不存在，跳过监视: {dir_path}")
+
+    observer.start()
+    FILE_OBSERVER = observer
+    print(f"✅ 文件监听已启动（防抖时间: {debounce_seconds}秒）")
+
+
+def stop_file_watcher() -> None:
+    """停止文件监听器。"""
+    global FILE_OBSERVER, SYNC_DEBOUNCE_TIMER
+
+    # 取消待执行的同步
+    with SYNC_LOCK:
+        if SYNC_DEBOUNCE_TIMER is not None:
+            SYNC_DEBOUNCE_TIMER.cancel()
+            SYNC_DEBOUNCE_TIMER = None
+
+    # 停止观察者
+    if FILE_OBSERVER is not None:
+        print("\n📁 停止文件监听...")
+        FILE_OBSERVER.stop()
+        FILE_OBSERVER.join()
+        FILE_OBSERVER = None
+        print("✅ 文件监听已停止")
+
+
 def create_daytona_backend_with_skills(ngrok_url: str | None = None):
     """创建 Daytona Sandbox，上传 skills 和 data，并返回 backend。
 
@@ -169,6 +377,10 @@ def create_daytona_backend_with_skills(ngrok_url: str | None = None):
             if test_result.exit_code == 0:
                 print(f"✅ 成功连接到现有沙箱: {sandbox.id}")
                 DAYTONA_SANDBOX = sandbox
+
+                # 同步文件夹到沙箱（确保本地更新被同步）
+                sync_folders_to_sandbox(sandbox)
+
                 backend = DaytonaSandbox(sandbox=sandbox)
                 return backend, daytona, sandbox
             else:
@@ -192,56 +404,8 @@ def create_daytona_backend_with_skills(ngrok_url: str | None = None):
 
     print(f"✅ 沙箱创建成功: {sandbox.id}")
 
-    # 上传 skills 文件夹
-    upload_skills_to_sandbox(sandbox, SKILLS_DIR, "/home/daytona/skills")
-
-    # 上传 data 文件夹到 sales_cli.py 期望的位置
-    # sales_cli.py 使用: Path(__file__).resolve().parent.parent / "data"
-    # 脚本在: /home/daytona/skills/万销销售场景/scripts/
-    # 所以 data 应该在: /home/daytona/skills/万销销售场景/data/
-    # 上传 data 文件夹到 sales_cli.py 期望的位置
-    # sales_cli.py 使用: Path(__file__).resolve().parent.parent / "data"
-    # 脚本在: /home/daytona/skills/万销销售场景/scripts/
-    # 所以 data 应该在: /home/daytona/skills/万销销售场景/data/
-    upload_directory_to_sandbox(
-        sandbox,
-        DATA_DIR,
-        "/home/daytona/data",
-        "data",
-    )
-
-    # 上传 memories 文件夹到沙箱（供 MemoryMiddleware 使用）
-    upload_directory_to_sandbox(
-        sandbox,
-        MEMORIES_DIR,
-        "/home/daytona/memories",
-        "memories",
-    )
-
-    # 验证上传
-    print("\n🔍 验证上传的文件...")
-    ls_result = sandbox.process.exec("find /home/daytona/skills -type f | head -10")
-    print(f"沙箱中的 skills 文件:\n{ls_result.result}")
-
-    # 验证 data 文件夹存在且包含 customer_db.csv
-    ls_data_result = sandbox.process.exec("ls -la /home/daytona/data")
-    print(f"\n沙箱中的 data 文件:\n{ls_data_result.result}")
-
-    # 检查 customer_db.csv 是否存在
-    check_csv = sandbox.process.exec(
-        "test -f /home/daytona/data/customer_db.csv && echo '✅ customer_db.csv 存在' || echo '❌ customer_db.csv 不存在'"
-    )
-    print(f"\n{check_csv.result}")
-
-    # 验证 memories 文件夹存在
-    ls_memories_result = sandbox.process.exec("ls -la /home/daytona/memories")
-    print(f"\n沙箱中的 memories 文件:\n{ls_memories_result.result}")
-
-    # 检查 MEMORY.md 是否存在
-    check_memory = sandbox.process.exec(
-        "test -f /home/daytona/memories/MEMORY.md && echo '✅ MEMORY.md 存在' || echo '❌ MEMORY.md 不存在'"
-    )
-    print(f"\n{check_memory.result}")
+    # 同步文件夹到沙箱
+    sync_folders_to_sandbox(sandbox)
 
     # 使用 DaytonaSandbox 作为 backend
     backend = DaytonaSandbox(sandbox=sandbox)
@@ -253,6 +417,10 @@ def create_daytona_backend_with_skills(ngrok_url: str | None = None):
 def cleanup_daytona():
     """清理 Daytona 沙箱。"""
     global DAYTONA_INSTANCE, DAYTONA_SANDBOX
+
+    # 先停止文件监听器
+    stop_file_watcher()
+
     if DAYTONA_INSTANCE and DAYTONA_SANDBOX:
         print("\n🧹 清理 Daytona 沙箱...")
         try:
@@ -374,7 +542,7 @@ def build_agent() -> Any:
 
 def build_memory_agent(backend: Any | None = None) -> Any:
     """构建 Memory Agent。
-    
+
     Args:
         backend: 可选的 backend 实例。如果提供，将使用该 backend 而不是创建新的。
                  这样可以确保 Memory Agent 和主 Agent 访问相同的文件系统。
@@ -394,7 +562,7 @@ def build_memory_agent(backend: Any | None = None) -> Any:
     yesterday = today - timedelta(days=1)
     long_term_path, today_path = _ensure_memory_files(today)
     yesterday_path = f"/memories/daily/{yesterday.strftime('%Y-%m-%d')}.md"
-    
+
     # 构建记忆路径列表（与主 Agent 相同）
     if DAYTONA_AVAILABLE and backend is not None:
         # 使用与主 Agent 相同的 Daytona backend
@@ -406,7 +574,7 @@ def build_memory_agent(backend: Any | None = None) -> Any:
     else:
         # 使用本地 FilesystemBackend
         memory_paths = [long_term_path, today_path, yesterday_path]
-    
+
     # 如果没有提供 backend，创建默认的本地 backend
     if backend is None:
         backend = FilesystemBackend(root_dir=str(PROJECT_ROOT), virtual_mode=True)
@@ -539,47 +707,102 @@ def _memories_payload() -> dict[str, Any]:
 AGENT: Any | None = None
 MEMORY_AGENT: Any | None = None
 
-
+# 使用文件锁确保多进程安全初始化
 _AGENTS_INITIALIZED = False
 _INIT_LOCK_FILE = Path(__file__).resolve().parent / ".agents_init.lock"
+_INIT_LOCK_FD: int | None = None
 
 
-def _is_another_process_initializing() -> bool:
-    """检查是否有其他进程正在初始化。"""
+def _acquire_flock() -> bool:
+    """获取文件锁（非阻塞）。
+
+    Returns:
+        True: 成功获取锁
+        False: 锁已被其他进程持有
+    """
+    global _INIT_LOCK_FD
     try:
-        # 尝试创建锁文件
-        fd = os.open(str(_INIT_LOCK_FILE), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.close(fd)
-        return False
-    except FileExistsError:
-        # 锁文件已存在，说明其他进程正在初始化
+        import fcntl
+
+        _INIT_LOCK_FD = os.open(str(_INIT_LOCK_FILE), os.O_CREAT | os.O_RDWR)
+        # 尝试获取非阻塞排他锁
+        fcntl.flock(_INIT_LOCK_FD, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # 写入当前 PID
+        os.ftruncate(_INIT_LOCK_FD, 0)
+        os.write(_INIT_LOCK_FD, str(os.getpid()).encode())
+        os.fsync(_INIT_LOCK_FD)
         return True
+    except (OSError, IOError, ImportError):
+        # 获取锁失败（被其他进程持有）
+        if _INIT_LOCK_FD is not None:
+            try:
+                os.close(_INIT_LOCK_FD)
+            except:
+                pass
+            _INIT_LOCK_FD = None
+        return False
 
 
-def _wait_for_initialization(timeout: float = 30.0) -> bool:
-    """等待其他进程完成初始化。"""
-    import time
+def _release_flock() -> None:
+    """释放文件锁。"""
+    global _INIT_LOCK_FD
+    if _INIT_LOCK_FD is not None:
+        try:
+            import fcntl
 
-    start = time.time()
-    while time.time() - start < timeout:
-        if not _INIT_LOCK_FILE.exists():
-            # 锁文件被删除，说明初始化完成
-            return True
-        time.sleep(0.5)
-    return False
-
-
-def _cleanup_lock_file():
-    """清理锁文件。"""
+            fcntl.flock(_INIT_LOCK_FD, fcntl.LOCK_UN)
+            os.close(_INIT_LOCK_FD)
+        except:
+            pass
+        finally:
+            _INIT_LOCK_FD = None
+    # 尝试删除锁文件
     try:
         if _INIT_LOCK_FILE.exists():
             _INIT_LOCK_FILE.unlink()
-    except Exception:
+    except:
         pass
 
 
+def _release_flock_keep_file() -> None:
+    """释放文件锁但保留锁文件作为'已初始化'标记。"""
+    global _INIT_LOCK_FD
+    if _INIT_LOCK_FD is not None:
+        try:
+            import fcntl
+
+            fcntl.flock(_INIT_LOCK_FD, fcntl.LOCK_UN)
+            os.close(_INIT_LOCK_FD)
+        except:
+            pass
+        finally:
+            _INIT_LOCK_FD = None
+
+
+def _is_uvicorn_reloader_process() -> bool:
+    """检测当前是否是 Uvicorn 的 reloader 进程。"""
+    # Uvicorn reloader 进程会设置特殊的环境变量
+    if sys.argv:
+        return (
+            os.getenv("UVICORN_RELOADER") == "1" or "uvicorn.supervisors" in sys.argv[0]
+        )
+    return False
+
+
+def _is_worker_process() -> bool:
+    """检测当前是否是 Uvicorn worker 进程（非 reloader）。"""
+    # 检查是否有 Uvicorn 特定的环境变量
+    return os.getenv("UVICORN_WORKER") == "1" or os.getenv("GUNICORN_WORKER") == "1"
+
+
 def init_agents() -> None:
-    """在应用启动时预加载所有 Agent 和沙箱。"""
+    """在应用启动时预加载所有 Agent 和沙箱。
+
+    使用文件锁确保多进程安全：只有一个进程能成功初始化，
+    其他进程会等待初始化完成后直接返回。
+
+    注意：此函数应该在 main() 中调用，不要在模块导入时调用。
+    """
     global AGENT, MEMORY_AGENT, _AGENTS_INITIALIZED
 
     # 快速检查：如果已初始化，直接返回
@@ -587,19 +810,36 @@ def init_agents() -> None:
         print("⚠️  Agents 已初始化，跳过重复初始化")
         return
 
-    # 检查是否有其他进程正在初始化
-    if _is_another_process_initializing():
+    # 尝试获取文件锁
+    if not _acquire_flock():
+        # 获取锁失败，说明其他进程正在初始化
         print("⏳ 检测到其他进程正在初始化 Agents，等待中...")
-        if _wait_for_initialization():
-            print("✅ 其他进程初始化完成，复用已创建的 Agents")
-            # 注意：这里 AGENT 可能还是 None（worker 进程无法访问主进程的内存）
-            # 但沙箱已经由主进程创建好了
-            if AGENT is None:
-                # Worker 进程需要重新初始化（但沙箱已存在，不会重复创建）
-                pass
-        return
 
+        # 等待其他进程完成初始化（通过轮询检查 AGENT 是否被设置）
+        timeout = 60.0
+        start = time.time()
+        while time.time() - start < timeout:
+            if _AGENTS_INITIALIZED or AGENT is not None:
+                print("✅ 其他进程初始化完成，复用已创建的 Agents")
+                return
+            time.sleep(0.5)
+
+        print("⚠️  等待超时，尝试强制接管初始化...")
+        # 释放旧锁（如果有）并重新尝试
+        _release_flock()
+        if not _acquire_flock():
+            print("❌ 无法获取初始化锁，跳过初始化")
+            return
+
+    # 获取锁成功，开始初始化
     try:
+        # 双重检查：获取锁后再次确认是否已初始化
+        if _AGENTS_INITIALIZED and AGENT is not None:
+            print("⚠️  Agents 已在其他进程中初始化，跳过")
+            return
+
+        init_start_time = time.time()
+
         print("=" * 60)
         print("🚀 预加载 Agents...")
         print("=" * 60)
@@ -614,30 +854,34 @@ def init_agents() -> None:
             print("\n[2/2] 初始化 Memory Agent...")
             # 获取主 Agent 的 backend
             main_agent_backend = None
-            if hasattr(AGENT, '_backend'):
+            if hasattr(AGENT, "_backend"):
                 main_agent_backend = AGENT._backend
-            elif hasattr(AGENT, 'backend'):
+            elif hasattr(AGENT, "backend"):
                 main_agent_backend = AGENT.backend
-            
+
             MEMORY_AGENT = build_memory_agent(backend=main_agent_backend)
             print("✅ Memory Agent 初始化完成")
         else:
             print("\n[2/2] Memory Agent 已禁用，跳过初始化")
 
         _AGENTS_INITIALIZED = True
+        elapsed = time.time() - init_start_time
         print("\n" + "=" * 60)
-        print("✅ 所有 Agents 预加载完成！")
+        print(f"✅ 所有 Agents 预加载完成！({elapsed:.1f}s)")
         print("=" * 60 + "\n")
+
+        # 启动文件监听器（自动同步本地变更到沙箱）
+        start_file_watcher()
 
     except Exception as e:
         print(f"❌ 初始化 Agents 失败: {e}")
         raise
     finally:
-        # 延迟清理锁文件，确保其他进程有足够时间检测到初始化完成
-        import time
-
+        # 释放锁，但保留文件作为"已初始化"标记
+        # 这样其他进程可以检测到初始化已完成
         time.sleep(1)
-        _cleanup_lock_file()
+        _release_flock_keep_file()
+
 
 def get_agent() -> Any:
     """获取已预加载的主 Agent。"""
@@ -729,62 +973,6 @@ def _merge_long_term_memory(
     long_term_path.write_text(_render_long_term_sections(sections), encoding="utf-8")
 
 
-def _safe_json_loads(text: str) -> dict[str, Any]:
-    try:
-        payload = json.loads(text)
-        return payload if isinstance(payload, dict) else {}
-    except Exception:
-        return {}
-
-
-def _strip_markdown_syntax(text: str) -> str:
-    """将 Markdown 格式转换为纯文本。"""
-    if not text:
-        return ""
-
-    value = text
-    # 代码块 ```
-    value = re.sub(r"```[\w-]*\n?", "", value)
-    value = value.replace("```", "")
-    # 行内代码 `code`
-    value = re.sub(r"`([^`]+)`", r"\1", value)
-    # 粗体 **text**
-    value = re.sub(r"\*\*([^*]+)\*\*", r"\1", value)
-    # 斜体 *text* 或 _text_
-    value = re.sub(r"\*([^*]+)\*", r"\1", value)
-    value = re.sub(r"_([^_]+)_", r"\1", value)
-    # 高亮 ==text==
-    value = re.sub(r"==([^=]+)==", r"\1", value)
-    # 删除线 ~~text~~
-    value = re.sub(r"~~([^~]+)~~", r"\1", value)
-    # 链接 [text](url) -> 只保留 text
-    value = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", value)
-    # 图片 ![alt](url) -> 移除
-    value = re.sub(r"!\[[^\]]*\]\([^)]+\)", "", value)
-    # 标题 # ## ### -> 移除 # 符号
-    value = re.sub(r"^#{1,6}\s*", "", value, flags=re.MULTILINE)
-    # 引用 > -> 移除 > 符号
-    value = re.sub(r"^>\s*", "", value, flags=re.MULTILINE)
-    # 列表 - * + 1. -> 移除列表标记
-    value = re.sub(r"^[-*+]\s+", "", value, flags=re.MULTILINE)
-    value = re.sub(r"^\d+\.\s+", "", value, flags=re.MULTILINE)
-    # 水平线 --- *** ___ -> 移除
-    value = re.sub(r"^[-*_]{3,}\s*$", "", value, flags=re.MULTILINE)
-    # HTML 标签
-    value = re.sub(r"<[^>]+>", "", value)
-    return value
-    if not text:
-        return ""
-
-    value = text
-    value = re.sub(r"```[\w-]*\n?", "", value)
-    value = value.replace("```", "")
-    value = re.sub(r"`([^`]+)`", r"\1", value)
-    value = re.sub(r"\*\*([^*]+)\*\*", r"\1", value)
-    value = re.sub(r"==([^=]+)==", r"\1", value)
-    return value
-
-
 def _is_internal_leak_line(line: str) -> bool:
     if not OUTPUT_SANITIZE_ENABLED or not OUTPUT_SANITIZE_CONFIG.enabled:
         return False
@@ -800,8 +988,8 @@ def _is_internal_leak_line(line: str) -> bool:
 
 
 def _sanitize_user_facing_text(text: str) -> str:
-    raw = _strip_markdown_syntax(text)
-    lines = raw.splitlines()
+    """清理用户可见文本，只过滤内部信息泄漏，保留 Markdown 格式。"""
+    lines = text.splitlines()
     kept = [line for line in lines if not _is_internal_leak_line(line)]
     cleaned = "\n".join(kept).strip()
     return cleaned
@@ -815,10 +1003,10 @@ def _consume_stream_buffer(buffer: str) -> tuple[str, str]:
     remain = parts.pop() if parts else ""
     output_parts: list[str] = []
     for raw_line in parts:
-        clean_line = _strip_markdown_syntax(raw_line)
-        if _is_internal_leak_line(clean_line):
+        # 只过滤内部信息泄漏，保留 Markdown 格式
+        if _is_internal_leak_line(raw_line):
             continue
-        output_parts.append(clean_line)
+        output_parts.append(raw_line)
 
     flushed = "\n".join(output_parts)
     if flushed:
@@ -895,23 +1083,31 @@ def _truncate_history(history: list[Any], max_rounds: int = 3) -> list[Any]:
     valid_messages = []
     for item in history:
         if isinstance(item, dict):
-            role = item.get('role')
-            if role in {'user', 'assistant'}:
+            role = item.get("role")
+            if role in {"user", "assistant"}:
                 valid_messages.append(item)
         elif isinstance(item, (list, tuple)) and len(item) == 2:
             # 处理 [user_msg, assistant_msg] 格式
             user_msg, assistant_msg = item
             if user_msg:
-                valid_messages.append({'role': 'user', 'content': str(user_msg)})
+                valid_messages.append({"role": "user", "content": str(user_msg)})
             if assistant_msg:
-                valid_messages.append({'role': 'assistant', 'content': str(assistant_msg)})
+                valid_messages.append(
+                    {"role": "assistant", "content": str(assistant_msg)}
+                )
 
     # 只保留最近 N 轮（每轮包含 user + assistant 两条消息）
     max_messages = max_rounds * 2
-    truncated = valid_messages[-max_messages:] if len(valid_messages) > max_messages else valid_messages
+    truncated = (
+        valid_messages[-max_messages:]
+        if len(valid_messages) > max_messages
+        else valid_messages
+    )
 
     if len(valid_messages) > max_messages:
-        print(f"📉 历史对话已截断: {len(valid_messages)} 条 -> {len(truncated)} 条 (保留最近 {max_rounds} 轮)")
+        print(
+            f"📉 历史对话已截断: {len(valid_messages)} 条 -> {len(truncated)} 条 (保留最近 {max_rounds} 轮)"
+        )
 
     return truncated
 
@@ -929,20 +1125,20 @@ def _to_deepagent_messages(history: list[Any], user_text: str) -> list[dict[str,
 
     for item in truncated_history:
         if isinstance(item, dict):
-            role = item.get('role')
-            content = item.get('content', '')
-            if role in {'user', 'assistant'}:
-                messages.append({'role': role, 'content': str(content)})
+            role = item.get("role")
+            content = item.get("content", "")
+            if role in {"user", "assistant"}:
+                messages.append({"role": role, "content": str(content)})
             continue
 
         if isinstance(item, (list, tuple)) and len(item) == 2:
             user_msg, assistant_msg = item
             if user_msg:
-                messages.append({'role': 'user', 'content': str(user_msg)})
+                messages.append({"role": "user", "content": str(user_msg)})
             if assistant_msg:
-                messages.append({'role': 'assistant', 'content': str(assistant_msg)})
+                messages.append({"role": "assistant", "content": str(assistant_msg)})
 
-    messages.append({'role': 'user', 'content': user_text})
+    messages.append({"role": "user", "content": user_text})
     return messages
 
 
@@ -1155,10 +1351,10 @@ async def stream_chat_with_agent(
             yield {"event": "error", "detail": f"stream failed: {exc}"}
 
     if stream_buffer:
-        tail = _strip_markdown_syntax(stream_buffer)
-        if not _is_internal_leak_line(tail):
-            assistant_full_text += tail
-            yield {"event": "delta", "text": tail}
+        # 保留 Markdown 格式，只过滤内部信息
+        if not _is_internal_leak_line(stream_buffer):
+            assistant_full_text += stream_buffer
+            yield {"event": "delta", "text": stream_buffer}
 
     if not assistant_full_text and fallback_ai_text:
         assistant_full_text = _sanitize_user_facing_text(fallback_ai_text)
@@ -1194,9 +1390,9 @@ def create_app() -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
     # 应用启动时初始化 Agents（带多进程保护）
+    # 注意：只在 main() 中调用 init_agents()，避免模块导入时重复初始化
+    # init_agents()  # 已移至 main() 函数中统一调用
     init_agents()
-    app = FastAPI(title="AI Chat Platform", version="1.0.0")
-    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -1216,56 +1412,30 @@ def create_app() -> FastAPI:
     def memories() -> dict[str, Any]:
         return _memories_payload()
 
-    @app.get("/api/countdown/{task_id}")
-    async def get_countdown_status_api(task_id: str) -> dict[str, Any]:
-        """代理查询 MCP 服务的倒计时状态"""
-        import urllib.error
-        import urllib.request
+    @app.post("/api/sync")
+    def sync_to_sandbox() -> dict[str, Any]:
+        """手动触发本地文件夹同步到沙箱。
 
-        try:
-            # 调用 MCP 服务的 get_countdown_status 工具
-            # MCP 通过 /messages/ 端点接收 JSON-RPC 请求
-            request_body = json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "tools/call",
-                    "params": {
-                        "name": "get_countdown_status",
-                        "arguments": {"task_id": task_id},
-                    },
-                }
-            ).encode("utf-8")
+        用于在更新本地 skills/data/memories 文件夹后，
+        无需重启应用即可将变更同步到 Daytona 沙箱。
+        """
+        global DAYTONA_SANDBOX
 
-            req = urllib.request.Request(
-                f"{COUNTDOWN_MCP_URL}/messages/",
-                data=request_body,
-                headers={"Content-Type": "application/json"},
-                method="POST",
+        if DAYTONA_SANDBOX is None:
+            raise HTTPException(
+                status_code=503, detail="Daytona 沙箱未初始化，请先重启应用"
             )
 
-            with urllib.request.urlopen(req, timeout=5) as response:
-                response_data = json.loads(response.read().decode("utf-8"))
-                # 解析 MCP 响应
-                if "result" in response_data:
-                    result = response_data["result"]
-                    if isinstance(result, dict) and "content" in result:
-                        content = result["content"]
-                        if isinstance(content, list) and len(content) > 0:
-                            text_item = content[0]
-                            if isinstance(text_item, dict) and "text" in text_item:
-                                data = json.loads(text_item["text"])
-                                return data
-
-                # 如果无法解析，返回错误
-                return {"status": "error", "message": "无法解析 MCP 响应"}
-
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                return {"status": "not_found", "task_id": task_id}
-            return {"status": "error", "message": f"MCP 服务错误: {e.code}"}
+        try:
+            print("\n🔄 收到同步请求，开始同步文件夹到沙箱...")
+            sync_folders_to_sandbox(DAYTONA_SANDBOX)
+            return {
+                "status": "success",
+                "message": "文件夹同步完成",
+                "synced_folders": ["skills", "data", "memories"],
+            }
         except Exception as e:
-            return {"status": "error", "message": f"查询失败: {str(e)}"}
+            raise HTTPException(status_code=500, detail=f"同步失败: {str(e)}") from e
 
     @app.get("/")
     def index() -> HTMLResponse:
@@ -1317,19 +1487,17 @@ app = create_app()
 
 def main() -> None:
     auto_reload = os.getenv("AUTO_RELOAD", "1") == "1"
-    port = int(os.getenv("PORT", "7860"))
-
-    # Agents 已在 create_app() 中初始化
-    # 不需要在这里再次调用 init_agents()
-
-    # 注册信号处理程序，确保程序退出时清理沙箱
-    auto_reload = os.getenv("AUTO_RELOAD", "1") == "1"
     port = int(os.getenv("PORT", "8005"))
 
-    # 在主进程中预加载 Agents（在 uvicorn 启动前）
-    print("🚀 主进程：预加载 Agents...")
-    init_agents()
-    print("✅ Agents 预加载完成，启动 Uvicorn...\n")
+    # 检查是否已经在其他进程中初始化了
+    # 如果锁文件存在，说明其他进程正在初始化或已完成
+    if _INIT_LOCK_FILE.exists():
+        print("📋 检测到 Agents 正在其他进程中初始化，跳过当前进程初始化")
+    else:
+        # 在主进程中预加载 Agents（在 uvicorn 启动前）
+        print("🚀 主进程：预加载 Agents...")
+        init_agents()
+        print("✅ Agents 预加载完成，启动 Uvicorn...\n")
 
     # 注册信号处理程序，确保程序退出时清理沙箱
     import signal

@@ -24,21 +24,21 @@ description: 万销客户阶段判断与需求分析技能。用于代理人输�
 
 - **高意向**：调用 `issue_policy_tool`。
 - **中意向**：调用 `claim_case_tool` 与 `issue_policy_tool`。
-- **低意向**：调用 `product_knowledge_share_tool` 与 `periodic_care_tool`。
+- **低意向**：调用 `agent_ai_business_card_tool` 与 `periodic_care_tool`。
 
 
 ## 绑定mcp工具
 
 - 编排脚本：`scripts/run_wanxiao_sales_flow.py`
 - 涉及 MCP 工具：
-  - `intelligent_judgment`
-  - `issue_policy_tool`
-  - `product_comparison_tool`
-  - `claim_case_tool`
-  - `personal_needs_analysis_tool`
-  - `product_knowledge_share_tool`
-  - `agent_ai_business_card_tool`
-  - `periodic_care_tool`
+  - `intelligent_judgment`（智能意向判断）
+  - `issue_policy_tool`（出单工具）
+  - `product_comparison_tool`（产品对比工具）
+  - `claim_case_tool`（理赔案例工具）
+  - `personal_needs_analysis_tool`（个人需求分析工具）
+  - `product_knowledge_share_tool`（产品知识分享工具）
+  - `agent_ai_business_card_tool`（代理人AI名片工具）
+  - `periodic_care_tool`（定期关怀工具）
 
 ### Basic Usage (沙箱环境)
 
@@ -82,33 +82,96 @@ python /home/daytona/skills/万销销售场景/scripts/sales_cli.py deep_guidanc
 ## 不要做的事
 
 - 不要跳过意向判断直接调用出单/培育工具。
-- 不要把中意向与低意向的触发话术混用。
+
 
 ## 输出规范
 
 - 每个工具结果优先使用 `structuredContent`。
 - 失败时返回 `status=error` 与明确错误信息（连接失败、参数缺失、调用超时）。
+- `intelligent_judgment`工具的结果不需要输出,只需要说明客户为高/中/低意向。
 
-### 按意向分层的输出要求
+### 按工具结果的输出要求
 
-#### 高意向（`issue_policy_tool`）
-输出应聚焦促成转化：
-- **保费金额**：明确展示 `annual_premium` / `monthly_premium`
-- **简化决策**：突出核心保障与一键投保入口
-- 内容不要超过100个字
+#### `issue_policy_tool`（出单工具）
+必须以下列表格格式输出：
 
-#### 中意向（`claim_case_tool`、`issue_policy_tool`）
-输出应侧重价值论证：
-- **分析结果**：清晰呈现需求分析结论、匹配案例数量
-- **亮点内容**：强调产品 `highlights`、理赔速度、保障范围优势
-- **对比优势**：如有产品对比，突出差异化价值点
-- 内容不要超过100个字
+| 项目 | 内容 |
+|------|------|
+| 月保费 | ¥{monthly_premium} |
+| 年保费 | ¥{annual_premium} |
+| 客户年龄 | {input_features.age} |
+| 客户性别 | {input_features.gender} |
+| 历史理赔次数 | {input_features.claim_count} |
 
-#### 低意向（`product_knowledge_share_tool`、`periodic_care_tool`）
-输出应采用教育+关怀策略：
-- **知识科普**：解释保险概念、条款含义、常见误区
-- **关怀形式**：结合节日/天气等场景给出温馨提示
-- **软性引导**：不直接推销，而是建立信任与专业形象
-- **留资钩子**：提供后续咨询入口，保持长期触达可能
-- 内容不要超过100个字
+#### `product_comparison_tool`（产品对比工具）
+必须以下列表格格式输出：
+
+| 产品名称 | 类型 | 价格档位 | 保额上限 | 等待期 | 核心亮点 | 注意事项 |
+|---------|------|---------|---------|--------|---------|---------|
+| {comparison_table[0].product} | {comparison_table[0].type} | {comparison_table[0].price_band} | {comparison_table[0].coverage_limit} | {comparison_table[0].waiting_period} | {comparison_table[0].highlights} | {comparison_table[0].limitations} |
+| {comparison_table[1].product} | ... | ... | ... | ... | ... | ... |
+
+#### `claim_case_tool`（理赔案例工具）
+必须以下列表格格式输出：
+
+| 案例ID | 疾病 | 匹配产品 | 理赔金额 | 审批天数 | 关键要点 |
+|--------|------|---------|---------|---------|---------|
+| {cases[0].case_id} | {cases[0].disease} | {cases[0].matched_product} | ¥{cases[0].claim_amount} | {cases[0].approval_days}天 | {cases[0].key_point} |
+| {cases[1].case_id} | ... | ... | ... | ... | ... |
+
+#### `personal_needs_analysis_tool`（个人需求分析工具）
+必须以下列表格格式输出：
+
+| 项目 | 内容 |
+|------|------|
+| 年收入 | ¥{analysis.annual_income} |
+| 家庭结构 | {analysis.family_structure} |
+| 客户年龄 | {analysis.age} |
+| 推荐年预算 | ¥{analysis.recommended_annual_budget} |
+| 推荐月预算 | ¥{analysis.recommended_monthly_budget} |
+| 保障重点 | {analysis.demand_focus} |
+
+**保障组合建议**：
+
+| 产品 | 配置比例 | 预估预算 | 保障范围 |
+|------|---------|---------|---------|
+| {analysis.recommended_portfolio[0].product} | {analysis.recommended_portfolio[0].allocation_ratio} | ¥{analysis.recommended_portfolio[0].estimated_budget} | {analysis.recommended_portfolio[0].coverage_scope} |
+| {analysis.recommended_portfolio[1].product} | ... | ... | ... |
+
+#### `product_knowledge_share_tool`（产品知识分享工具）
+必须以下列表格格式输出：
+
+**知识卡片**：
+
+| 产品 | 可保疾病 | 赔付范围 | 保额上限 | 简单解释 |
+|------|---------|---------|---------|---------|
+| {knowledge_cards[0].product} | {knowledge_cards[0].insurable_diseases} | {knowledge_cards[0].payout_scope} | {knowledge_cards[0].coverage_limit} | {knowledge_cards[0].easy_explain} |
+| {knowledge_cards[1].product} | ... | ... | ... | ... |
+
+**分享素材**：
+- 文章标题：{share_material.article_title}
+- 海报链接：{share_material.poster_url}
+
+#### `agent_ai_business_card_tool`（代理人AI名片工具）
+必须以下列表格格式输出：
+
+| 项目 | 内容 |
+|------|------|
+| 职称 | {card.title} |
+| 专业领域 | {card.specialty} |
+| 服务标签 | {card.service_tags} |
+| 分享链接 | {card.share_link} |
+
+#### `periodic_care_tool`（定期关怀工具）
+必须以下列表格格式输出：
+
+| 项目 | 内容 |
+|------|------|
+| 城市 | {city} |
+| 节日/事件 | {event} |
+| 关怀话术 | {care_message} |
+| 关联产品 | {linked_products} |
+| 下次触达建议 | {schedule_suggestion.next_touchpoint} |
+| 触达渠道 | {schedule_suggestion.channel} |
+
 

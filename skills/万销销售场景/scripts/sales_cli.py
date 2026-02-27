@@ -25,12 +25,11 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-
 # =============================================================================
 # 配置和数据加载
 # =============================================================================
 
-CUSTOMER_CSV_PATH = Path("/home/daytona/data/customer_db.csv")
+CUSTOMER_CSV_PATH = Path("/home/daytona/skills/万销销售场景/data/customer_db.csv")
 LIST_FIELDS = {
     "behaviors",
     "viewed_products",
@@ -425,7 +424,6 @@ def issue_policy_tool(customer_name: str) -> dict[str, Any]:
                 "claim_count": resolved_claim_count,
                 "reimbursed_diseases": resolved_diseases,
             },
-            "recommended_products": quote_products,
         },
         "ui_elements": ["产品方案摘要", "动态测算保费", "一键投保按钮", "核保须知"],
     }
