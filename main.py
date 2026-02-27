@@ -2,6 +2,7 @@ import csv
 import json
 import os
 import re
+import sys
 import threading
 import uuid
 from datetime import date, datetime, timedelta
@@ -10,7 +11,7 @@ from typing import Any, AsyncIterator
 
 import uvicorn
 from deepagents import create_deep_agent
-from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend
+from deepagents.backends import FilesystemBackend
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -23,16 +24,32 @@ from pydantic import BaseModel, Field
 from src.output_sanitize_config import load_output_sanitize_config
 from src.prompt_config import PromptConfig
 
-# 倒计时 MCP 服务配置
-COUNTDOWN_MCP_URL = os.getenv("COUNTDOWN_MCP_URL", "http://127.0.0.1:8765")
+# 尝试导入 Daytona（如果未安装则给出友好提示）
+from daytona import CreateSandboxBaseParams, Daytona, FileUpload
+from langchain_daytona import DaytonaSandbox
 
+DAYTONA_AVAILABLE = True
+
+# 项目路径
 PROJECT_ROOT = Path(__file__).resolve().parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
+SKILLS_DIR = PROJECT_ROOT / "skills"
+DATA_DIR = PROJECT_ROOT / "data"
 MEMORIES_DIR = PROJECT_ROOT / "memories"
 DAILY_DIR = MEMORIES_DIR / "daily"
 LONG_TERM_FILE = MEMORIES_DIR / "MEMORY.md"
 
+# Daytona 全局实例
+DAYTONA_INSTANCE: Daytona | None = None
+DAYTONA_SANDBOX: Any | None = None
+
 load_dotenv()
+from src.output_sanitize_config import load_output_sanitize_config
+from src.prompt_config import PromptConfig
+
+# 倒计时 MCP 服务配置
+COUNTDOWN_MCP_URL = os.getenv("COUNTDOWN_MCP_URL", "http://127.0.0.1:8765")
+
 PROMPTS = PromptConfig(PROJECT_ROOT)
 OUTPUT_SANITIZE_CONFIG = load_output_sanitize_config(
     PROJECT_ROOT / "config" / "output_sanitize.yaml"
@@ -48,6 +65,203 @@ def _env_flag(name: str, default: bool = True) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def upload_directory_to_sandbox(
+    sandbox, local_dir: Path, remote_base: str, label: str = "文件"
+):
+    """将本地目录上传到沙箱。"""
+    print(f"\n📤 正在上传 {label} 文件夹到沙箱 {remote_base}...")
+
+    upload_files = []
+
+    if not local_dir.exists():
+        print(f"⚠️  本地 {label} 目录不存在: {local_dir}")
+        return
+
+    # 遍历目录下的所有文件
+    for file_path in local_dir.rglob("*"):
+        if file_path.is_file():
+            # 计算相对路径
+            rel_path = file_path.relative_to(local_dir)
+            remote_path = f"{remote_base}/{rel_path}"
+
+            # 读取文件内容
+            try:
+                with open(file_path, "rb") as f:
+                    content = f.read()
+
+                upload_files.append(FileUpload(source=content, destination=remote_path))
+            except Exception as e:
+                print(f"⚠️  读取文件失败 {file_path}: {e}")
+
+    if upload_files:
+        # 批量上传文件
+        sandbox.fs.upload_files(upload_files)
+        print(f"✅ 已上传 {len(upload_files)} 个 {label} 文件到沙箱")
+    else:
+        print(f"⚠️  没有 {label} 文件需要上传")
+
+
+def upload_skills_to_sandbox(
+    sandbox, local_skills_dir: Path, remote_base: str = "/home/daytona/skills"
+):
+    """将 skills 文件夹上传到沙箱（兼容旧接口）。"""
+    upload_directory_to_sandbox(sandbox, local_skills_dir, remote_base, "skills")
+
+
+_SANDBOX_ID_FILE = Path(__file__).resolve().parent / ".daytona_sandbox_id"
+
+
+def _save_sandbox_id(sandbox_id: str):
+    """保存沙箱 ID 到文件，供其他进程读取。"""
+    try:
+        _SANDBOX_ID_FILE.write_text(sandbox_id, encoding="utf-8")
+    except Exception as e:
+        print(f"⚠️  保存沙箱 ID 失败: {e}")
+
+
+def _load_sandbox_id() -> str | None:
+    """从文件读取沙箱 ID。"""
+    try:
+        if _SANDBOX_ID_FILE.exists():
+            return _SANDBOX_ID_FILE.read_text(encoding="utf-8").strip()
+    except Exception:
+        pass
+    return None
+
+
+def _clear_sandbox_id():
+    """清除沙箱 ID 文件。"""
+    try:
+        if _SANDBOX_ID_FILE.exists():
+            _SANDBOX_ID_FILE.unlink()
+    except Exception:
+        pass
+
+
+def create_daytona_backend_with_skills(ngrok_url: str | None = None):
+    """创建 Daytona Sandbox，上传 skills 和 data，并返回 backend。
+
+    参数:
+        ngrok_url: ngrok URL，用于获取 IP 白名单。如果提供，将允许沙箱访问该 IP。
+                 例如: https://nell-pluteal-doria.ngrok-free.dev
+
+    返回:
+        tuple: (backend, daytona, sandbox)
+    """
+    global DAYTONA_INSTANCE, DAYTONA_SANDBOX
+
+    # 检查是否已有沙箱 ID（其他进程创建的）
+    existing_sandbox_id = _load_sandbox_id()
+
+    # 初始化 Daytona
+    daytona = Daytona()
+    DAYTONA_INSTANCE = daytona
+
+    # 如果有现有沙箱 ID，尝试连接
+    if existing_sandbox_id:
+        try:
+            print(f"🔍 尝试连接现有沙箱: {existing_sandbox_id}")
+            sandbox = daytona.get(existing_sandbox_id)
+            # 测试沙箱是否可用
+            test_result = sandbox.process.exec('echo "ping"')
+            if test_result.exit_code == 0:
+                print(f"✅ 成功连接到现有沙箱: {sandbox.id}")
+                DAYTONA_SANDBOX = sandbox
+                backend = DaytonaSandbox(sandbox=sandbox)
+                return backend, daytona, sandbox
+            else:
+                print("⚠️  现有沙箱不可用，创建新沙箱")
+        except Exception as e:
+            print(f"⚠️  连接现有沙箱失败: {e}，将创建新沙箱")
+
+    print("🚀 创建新的 Daytona 沙箱...")
+
+    # 准备沙箱参数 - 设置自动停止间隔为 None（永不自动停止）
+    params = CreateSandboxBaseParams(
+        auto_stop_interval=None,  # None = 永不自动停止
+    )
+
+    # 创建沙箱
+    sandbox = daytona.create(params)
+    DAYTONA_SANDBOX = sandbox
+
+    # 保存沙箱 ID
+    _save_sandbox_id(sandbox.id)
+
+    print(f"✅ 沙箱创建成功: {sandbox.id}")
+
+    # 上传 skills 文件夹
+    upload_skills_to_sandbox(sandbox, SKILLS_DIR, "/home/daytona/skills")
+
+    # 上传 data 文件夹到 sales_cli.py 期望的位置
+    # sales_cli.py 使用: Path(__file__).resolve().parent.parent / "data"
+    # 脚本在: /home/daytona/skills/万销销售场景/scripts/
+    # 所以 data 应该在: /home/daytona/skills/万销销售场景/data/
+    # 上传 data 文件夹到 sales_cli.py 期望的位置
+    # sales_cli.py 使用: Path(__file__).resolve().parent.parent / "data"
+    # 脚本在: /home/daytona/skills/万销销售场景/scripts/
+    # 所以 data 应该在: /home/daytona/skills/万销销售场景/data/
+    upload_directory_to_sandbox(
+        sandbox,
+        DATA_DIR,
+        "/home/daytona/data",
+        "data",
+    )
+
+    # 上传 memories 文件夹到沙箱（供 MemoryMiddleware 使用）
+    upload_directory_to_sandbox(
+        sandbox,
+        MEMORIES_DIR,
+        "/home/daytona/memories",
+        "memories",
+    )
+
+    # 验证上传
+    print("\n🔍 验证上传的文件...")
+    ls_result = sandbox.process.exec("find /home/daytona/skills -type f | head -10")
+    print(f"沙箱中的 skills 文件:\n{ls_result.result}")
+
+    # 验证 data 文件夹存在且包含 customer_db.csv
+    ls_data_result = sandbox.process.exec("ls -la /home/daytona/data")
+    print(f"\n沙箱中的 data 文件:\n{ls_data_result.result}")
+
+    # 检查 customer_db.csv 是否存在
+    check_csv = sandbox.process.exec(
+        "test -f /home/daytona/data/customer_db.csv && echo '✅ customer_db.csv 存在' || echo '❌ customer_db.csv 不存在'"
+    )
+    print(f"\n{check_csv.result}")
+
+    # 验证 memories 文件夹存在
+    ls_memories_result = sandbox.process.exec("ls -la /home/daytona/memories")
+    print(f"\n沙箱中的 memories 文件:\n{ls_memories_result.result}")
+
+    # 检查 MEMORY.md 是否存在
+    check_memory = sandbox.process.exec(
+        "test -f /home/daytona/memories/MEMORY.md && echo '✅ MEMORY.md 存在' || echo '❌ MEMORY.md 不存在'"
+    )
+    print(f"\n{check_memory.result}")
+
+    # 使用 DaytonaSandbox 作为 backend
+    backend = DaytonaSandbox(sandbox=sandbox)
+    print("✅ DaytonaSandbox backend 创建成功")
+
+    return backend, daytona, sandbox
+
+
+def cleanup_daytona():
+    """清理 Daytona 沙箱。"""
+    global DAYTONA_INSTANCE, DAYTONA_SANDBOX
+    if DAYTONA_INSTANCE and DAYTONA_SANDBOX:
+        print("\n🧹 清理 Daytona 沙箱...")
+        try:
+            DAYTONA_INSTANCE.delete(DAYTONA_SANDBOX)
+            print("✅ 沙箱已删除")
+        except Exception as e:
+            print(f"⚠️  删除沙箱时出错: {e}")
+    # 清除沙箱 ID 文件
+    _clear_sandbox_id()
 
 
 MEMORY_AGENT_ENABLED = _env_flag("MEMORY_AGENT_ENABLED", default=True)
@@ -100,7 +314,6 @@ def build_agent() -> Any:
         raise RuntimeError("GLM_API_KEY is missing. Please set it in .env")
 
     os.environ["OPENAI_API_KEY"] = api_key
-
     # llm = ChatOpenAI(
     #     model=model_name,
     #     base_url="https://openrouter.ai/api/v1",
@@ -112,7 +325,6 @@ def build_agent() -> Any:
         temperature=0.1,
     )
 
-    skills_dir = PROJECT_ROOT / "skills"
     today = date.today()
     yesterday = today - timedelta(days=1)
     long_term_path, today_path = _ensure_memory_files(today)
@@ -127,22 +339,83 @@ def build_agent() -> Any:
         },
     )
 
-    def _make_backend(runtime):
-        return CompositeBackend(
-            default=StateBackend(runtime),  # Ephemeral storage
-            routes={
-                "/memories/": FilesystemBackend(root_dir=str(MEMORIES_DIR)),
-                "/skills/": FilesystemBackend(root_dir=str(PROJECT_ROOT)),
-            },  # Persistent storage
-        )
+    # 使用 Daytona Sandbox 作为 backend（如果可用）
+    if DAYTONA_AVAILABLE:
+        print("🚀 使用 Daytona Sandbox backend")
+        backend, _, _ = create_daytona_backend_with_skills()
+        # skills 使用沙箱中的路径
+        skills = ["/home/daytona/skills"]
+        # 记忆文件使用沙箱中的路径
+        memory_paths = [
+            "/home/daytona/memories/MEMORY.md",
+            f"/home/daytona/memories/daily/{today.strftime('%Y-%m-%d')}.md",
+            f"/home/daytona/memories/daily/{yesterday.strftime('%Y-%m-%d')}.md",
+        ]
+    else:
+        print("⚠️  Daytona 不可用，使用本地 FilesystemBackend")
+        from deepagents.backends import FilesystemBackend
 
+        backend = FilesystemBackend(root_dir=str(PROJECT_ROOT))
+        skills = [str(SKILLS_DIR)]
+        # 记忆文件使用本地虚拟路径
+        memory_paths = [long_term_path, today_path, yesterday_path]
     agent = create_deep_agent(
         model=llm,
         store=InMemoryStore(),
-        backend=FilesystemBackend(root_dir=str(PROJECT_ROOT)),
-        skills=[str(skills_dir)],
-        memory=[long_term_path, today_path, yesterday_path],
+        backend=backend,
+        skills=skills,
+        memory=memory_paths,
         checkpointer=CHECKPOINTER,
+        system_prompt=system_prompt,
+    )
+
+    return agent
+
+
+def build_memory_agent(backend: Any | None = None) -> Any:
+    """构建 Memory Agent。
+    
+    Args:
+        backend: 可选的 backend 实例。如果提供，将使用该 backend 而不是创建新的。
+                 这样可以确保 Memory Agent 和主 Agent 访问相同的文件系统。
+    """
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is missing. Please set it in .env")
+
+    os.environ["OPENAI_API_KEY"] = api_key
+    llm = ChatOpenAI(
+        model=memory_model_name,
+        base_url="https://openrouter.ai/api/v1",
+        temperature=0.1,
+    )
+
+    today = date.today()
+    yesterday = today - timedelta(days=1)
+    long_term_path, today_path = _ensure_memory_files(today)
+    yesterday_path = f"/memories/daily/{yesterday.strftime('%Y-%m-%d')}.md"
+    
+    # 构建记忆路径列表（与主 Agent 相同）
+    if DAYTONA_AVAILABLE and backend is not None:
+        # 使用与主 Agent 相同的 Daytona backend
+        memory_paths = [
+            "/home/daytona/memories/MEMORY.md",
+            f"/home/daytona/memories/daily/{today.strftime('%Y-%m-%d')}.md",
+            f"/home/daytona/memories/daily/{yesterday.strftime('%Y-%m-%d')}.md",
+        ]
+    else:
+        # 使用本地 FilesystemBackend
+        memory_paths = [long_term_path, today_path, yesterday_path]
+    
+    # 如果没有提供 backend，创建默认的本地 backend
+    if backend is None:
+        backend = FilesystemBackend(root_dir=str(PROJECT_ROOT), virtual_mode=True)
+
+    system_prompt = PROMPTS.render_prompt("memory_agent")
+    agent = create_deep_agent(
+        model=llm,
+        backend=backend,
+        memory=memory_paths,
         system_prompt=system_prompt,
     )
     return agent
@@ -262,42 +535,121 @@ def _memories_payload() -> dict[str, Any]:
     }
 
 
+# 预加载的 Agent 实例（应用启动时初始化）
 AGENT: Any | None = None
 MEMORY_AGENT: Any | None = None
 
 
-def get_agent() -> Any:
-    global AGENT
-    if AGENT is None:
+_AGENTS_INITIALIZED = False
+_INIT_LOCK_FILE = Path(__file__).resolve().parent / ".agents_init.lock"
+
+
+def _is_another_process_initializing() -> bool:
+    """检查是否有其他进程正在初始化。"""
+    try:
+        # 尝试创建锁文件
+        fd = os.open(str(_INIT_LOCK_FILE), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+        return False
+    except FileExistsError:
+        # 锁文件已存在，说明其他进程正在初始化
+        return True
+
+
+def _wait_for_initialization(timeout: float = 30.0) -> bool:
+    """等待其他进程完成初始化。"""
+    import time
+
+    start = time.time()
+    while time.time() - start < timeout:
+        if not _INIT_LOCK_FILE.exists():
+            # 锁文件被删除，说明初始化完成
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def _cleanup_lock_file():
+    """清理锁文件。"""
+    try:
+        if _INIT_LOCK_FILE.exists():
+            _INIT_LOCK_FILE.unlink()
+    except Exception:
+        pass
+
+
+def init_agents() -> None:
+    """在应用启动时预加载所有 Agent 和沙箱。"""
+    global AGENT, MEMORY_AGENT, _AGENTS_INITIALIZED
+
+    # 快速检查：如果已初始化，直接返回
+    if _AGENTS_INITIALIZED and AGENT is not None:
+        print("⚠️  Agents 已初始化，跳过重复初始化")
+        return
+
+    # 检查是否有其他进程正在初始化
+    if _is_another_process_initializing():
+        print("⏳ 检测到其他进程正在初始化 Agents，等待中...")
+        if _wait_for_initialization():
+            print("✅ 其他进程初始化完成，复用已创建的 Agents")
+            # 注意：这里 AGENT 可能还是 None（worker 进程无法访问主进程的内存）
+            # 但沙箱已经由主进程创建好了
+            if AGENT is None:
+                # Worker 进程需要重新初始化（但沙箱已存在，不会重复创建）
+                pass
+        return
+
+    try:
+        print("=" * 60)
+        print("🚀 预加载 Agents...")
+        print("=" * 60)
+
+        # 预加载主 Agent（会创建 Daytona 沙箱）
+        print("\n[1/2] 初始化主 Agent (Daytona Sandbox)...")
         AGENT = build_agent()
+        print("✅ 主 Agent 初始化完成")
+
+        # 预加载 Memory Agent（使用与主 Agent 相同的 backend）
+        if MEMORY_AGENT_ENABLED:
+            print("\n[2/2] 初始化 Memory Agent...")
+            # 获取主 Agent 的 backend
+            main_agent_backend = None
+            if hasattr(AGENT, '_backend'):
+                main_agent_backend = AGENT._backend
+            elif hasattr(AGENT, 'backend'):
+                main_agent_backend = AGENT.backend
+            
+            MEMORY_AGENT = build_memory_agent(backend=main_agent_backend)
+            print("✅ Memory Agent 初始化完成")
+        else:
+            print("\n[2/2] Memory Agent 已禁用，跳过初始化")
+
+        _AGENTS_INITIALIZED = True
+        print("\n" + "=" * 60)
+        print("✅ 所有 Agents 预加载完成！")
+        print("=" * 60 + "\n")
+
+    except Exception as e:
+        print(f"❌ 初始化 Agents 失败: {e}")
+        raise
+    finally:
+        # 延迟清理锁文件，确保其他进程有足够时间检测到初始化完成
+        import time
+
+        time.sleep(1)
+        _cleanup_lock_file()
+
+def get_agent() -> Any:
+    """获取已预加载的主 Agent。"""
+    if AGENT is None:
+        raise RuntimeError("Agent 尚未初始化，请先调用 init_agents()")
     return AGENT
 
 
-def build_memory_agent() -> Any:
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is missing. Please set it in .env")
-
-    os.environ["OPENAI_API_KEY"] = api_key
-    llm = ChatOpenAI(
-        model=memory_model_name,
-        base_url="https://openrouter.ai/api/v1",
-        temperature=0.1,
-    )
-
-    system_prompt = PROMPTS.render_prompt("memory_agent")
-    agent = create_deep_agent(
-        model=llm,
-        backend=FilesystemBackend(root_dir=str(PROJECT_ROOT), virtual_mode=True),
-        system_prompt=system_prompt,
-    )
-    return agent
-
-
 def get_memory_agent() -> Any:
-    global MEMORY_AGENT
+    """获取已预加载的 Memory Agent。"""
     if MEMORY_AGENT is None:
-        MEMORY_AGENT = build_memory_agent()
+        raise RuntimeError("Memory Agent 尚未初始化，请先调用 init_agents()")
     return MEMORY_AGENT
 
 
@@ -386,6 +738,41 @@ def _safe_json_loads(text: str) -> dict[str, Any]:
 
 
 def _strip_markdown_syntax(text: str) -> str:
+    """将 Markdown 格式转换为纯文本。"""
+    if not text:
+        return ""
+
+    value = text
+    # 代码块 ```
+    value = re.sub(r"```[\w-]*\n?", "", value)
+    value = value.replace("```", "")
+    # 行内代码 `code`
+    value = re.sub(r"`([^`]+)`", r"\1", value)
+    # 粗体 **text**
+    value = re.sub(r"\*\*([^*]+)\*\*", r"\1", value)
+    # 斜体 *text* 或 _text_
+    value = re.sub(r"\*([^*]+)\*", r"\1", value)
+    value = re.sub(r"_([^_]+)_", r"\1", value)
+    # 高亮 ==text==
+    value = re.sub(r"==([^=]+)==", r"\1", value)
+    # 删除线 ~~text~~
+    value = re.sub(r"~~([^~]+)~~", r"\1", value)
+    # 链接 [text](url) -> 只保留 text
+    value = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", value)
+    # 图片 ![alt](url) -> 移除
+    value = re.sub(r"!\[[^\]]*\]\([^)]+\)", "", value)
+    # 标题 # ## ### -> 移除 # 符号
+    value = re.sub(r"^#{1,6}\s*", "", value, flags=re.MULTILINE)
+    # 引用 > -> 移除 > 符号
+    value = re.sub(r"^>\s*", "", value, flags=re.MULTILINE)
+    # 列表 - * + 1. -> 移除列表标记
+    value = re.sub(r"^[-*+]\s+", "", value, flags=re.MULTILINE)
+    value = re.sub(r"^\d+\.\s+", "", value, flags=re.MULTILINE)
+    # 水平线 --- *** ___ -> 移除
+    value = re.sub(r"^[-*_]{3,}\s*$", "", value, flags=re.MULTILINE)
+    # HTML 标签
+    value = re.sub(r"<[^>]+>", "", value)
+    return value
     if not text:
         return ""
 
@@ -491,24 +878,71 @@ def _dispatch_memory_agent(user_message: str, assistant_message: str) -> None:
     worker.start()
 
 
-def _to_deepagent_messages(history: list[Any], user_text: str) -> list[dict[str, str]]:
-    messages: list[dict[str, str]] = []
+def _truncate_history(history: list[Any], max_rounds: int = 3) -> list[Any]:
+    """截断历史对话，只保留最近 N 轮 + 当前轮。
+
+    Args:
+        history: 完整的历史对话列表
+        max_rounds: 保留的对话轮数（默认 3 轮）
+
+    Returns:
+        截断后的历史列表
+    """
+    if not history:
+        return []
+
+    # 过滤出有效的对话轮（user + assistant 为一对）
+    valid_messages = []
     for item in history:
         if isinstance(item, dict):
-            role = item.get("role")
-            content = item.get("content", "")
-            if role in {"user", "assistant"}:
-                messages.append({"role": role, "content": str(content)})
+            role = item.get('role')
+            if role in {'user', 'assistant'}:
+                valid_messages.append(item)
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            # 处理 [user_msg, assistant_msg] 格式
+            user_msg, assistant_msg = item
+            if user_msg:
+                valid_messages.append({'role': 'user', 'content': str(user_msg)})
+            if assistant_msg:
+                valid_messages.append({'role': 'assistant', 'content': str(assistant_msg)})
+
+    # 只保留最近 N 轮（每轮包含 user + assistant 两条消息）
+    max_messages = max_rounds * 2
+    truncated = valid_messages[-max_messages:] if len(valid_messages) > max_messages else valid_messages
+
+    if len(valid_messages) > max_messages:
+        print(f"📉 历史对话已截断: {len(valid_messages)} 条 -> {len(truncated)} 条 (保留最近 {max_rounds} 轮)")
+
+    return truncated
+
+
+def _to_deepagent_messages(history: list[Any], user_text: str) -> list[dict[str, str]]:
+    """将历史对话转换为 deepagent 消息格式。
+
+    注意：这里的历史会被截断，只保留最近 3 轮。
+    早期对话内容已通过记忆系统保存到 system prompt。
+    """
+    messages: list[dict[str, str]] = []
+
+    # 截断历史，只保留最近 3 轮
+    truncated_history = _truncate_history(history, max_rounds=3)
+
+    for item in truncated_history:
+        if isinstance(item, dict):
+            role = item.get('role')
+            content = item.get('content', '')
+            if role in {'user', 'assistant'}:
+                messages.append({'role': role, 'content': str(content)})
             continue
 
         if isinstance(item, (list, tuple)) and len(item) == 2:
             user_msg, assistant_msg = item
             if user_msg:
-                messages.append({"role": "user", "content": str(user_msg)})
+                messages.append({'role': 'user', 'content': str(user_msg)})
             if assistant_msg:
-                messages.append({"role": "assistant", "content": str(assistant_msg)})
+                messages.append({'role': 'assistant', 'content': str(assistant_msg)})
 
-    messages.append({"role": "user", "content": user_text})
+    messages.append({'role': 'user', 'content': user_text})
     return messages
 
 
@@ -759,6 +1193,11 @@ def create_app() -> FastAPI:
     app = FastAPI(title="AI Chat Platform", version="1.0.0")
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
+    # 应用启动时初始化 Agents（带多进程保护）
+    init_agents()
+    app = FastAPI(title="AI Chat Platform", version="1.0.0")
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok", "model": model_name}
@@ -879,7 +1318,35 @@ app = create_app()
 def main() -> None:
     auto_reload = os.getenv("AUTO_RELOAD", "1") == "1"
     port = int(os.getenv("PORT", "7860"))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=auto_reload)
+
+    # Agents 已在 create_app() 中初始化
+    # 不需要在这里再次调用 init_agents()
+
+    # 注册信号处理程序，确保程序退出时清理沙箱
+    auto_reload = os.getenv("AUTO_RELOAD", "1") == "1"
+    port = int(os.getenv("PORT", "8005"))
+
+    # 在主进程中预加载 Agents（在 uvicorn 启动前）
+    print("🚀 主进程：预加载 Agents...")
+    init_agents()
+    print("✅ Agents 预加载完成，启动 Uvicorn...\n")
+
+    # 注册信号处理程序，确保程序退出时清理沙箱
+    import signal
+
+    def signal_handler(signum, frame):
+        print(f"\n接收到信号 {signum}，正在关闭...")
+        cleanup_daytona()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    try:
+        uvicorn.run("main:app", host="0.0.0.0", port=port, reload=auto_reload)
+    finally:
+        # 确保沙箱被清理
+        cleanup_daytona()
 
 
 if __name__ == "__main__":

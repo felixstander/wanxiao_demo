@@ -35,7 +35,6 @@ load_dotenv()
 
 # 检查必要的环境变量
 DAYTONA_API_KEY = os.getenv("DAYTONA_API_KEY")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 GLM_API_KEY = os.getenv("GLM_API_KEY")
 
 if not DAYTONA_API_KEY:
@@ -48,8 +47,6 @@ if not GLM_API_KEY:
     print("   获取地址: https://open.bigmodel.cn/")
     sys.exit(1)
 
-if not OPENROUTER_API_KEY:
-    print("⚠️ 警告: 未设置 OPENROUTER_API_KEY 环境变量（当前未使用）")
 
 # 导入 Daytona 和 DeepAgents
 from daytona import CreateSandboxBaseParams, Daytona, FileUpload
@@ -59,42 +56,18 @@ from langchain_daytona import DaytonaSandbox
 # 项目路径
 PROJECT_ROOT = Path(__file__).resolve().parent
 SKILLS_DIR = PROJECT_ROOT / "skills"
+DATA_DIR = PROJECT_ROOT / "data"  # data 目录路径
+MEMORIES_DIR = PROJECT_ROOT / "memories"
+DAILY_DIR = MEMORIES_DIR / "daily"
+LONG_TERM_FILE = MEMORIES_DIR / "MEMORY.md"
+SKILLS_DIR = PROJECT_ROOT / "skills"
 MEMORIES_DIR = PROJECT_ROOT / "memories"
 DAILY_DIR = MEMORIES_DIR / "daily"
 LONG_TERM_FILE = MEMORIES_DIR / "MEMORY.md"
 
-# 配置：ngrok URL（用于 Daytona 沙箱网络白名单）
-# 设置此环境变量后，沙箱将被允许访问该 ngrok 地址
-NGROK_URL = os.getenv("NGROK_URL", "")
-
 # 确保目录存在
 MEMORIES_DIR.mkdir(parents=True, exist_ok=True)
 DAILY_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def get_ngrok_ip(ngrok_url: str) -> str | None:
-    """解析 ngrok 域名对应的 IP 地址。"""
-    import socket
-    from urllib.parse import urlparse
-
-    try:
-        parsed = urlparse(ngrok_url)
-        hostname = parsed.hostname
-
-        if not hostname:
-            print(f"❌ 无法解析 URL: {ngrok_url}")
-            return None
-
-        ip_address = socket.gethostbyname(hostname)
-        print(f"✅ {hostname} -> {ip_address}")
-        return ip_address
-
-    except socket.gaierror as e:
-        print(f"❌ DNS 解析失败: {e}")
-        return None
-    except Exception as e:
-        print(f"❌ 错误: {e}")
-        return None
 
 
 def ensure_memory_files(today: date) -> tuple[str, str, str]:
@@ -130,23 +103,23 @@ def ensure_memory_files(today: date) -> tuple[str, str, str]:
     )
 
 
-def upload_skills_to_sandbox(
-    sandbox, local_skills_dir: Path, remote_base: str = "/home/daytona/skills"
+def upload_directory_to_sandbox(
+    sandbox, local_dir: Path, remote_base: str, label: str = "文件"
 ):
-    """将 skills 文件夹上传到沙箱。"""
-    print(f"\n📤 正在上传 skills 文件夹到沙箱 {remote_base}...")
+    """将本地目录上传到沙箱。"""
+    print(f"\n📤 正在上传 {label} 文件夹到沙箱 {remote_base}...")
 
     upload_files = []
 
-    if not local_skills_dir.exists():
-        print(f"⚠️  本地 skills 目录不存在: {local_skills_dir}")
+    if not local_dir.exists():
+        print(f"⚠️  本地 {label} 目录不存在: {local_dir}")
         return
 
-    # 遍历 skills 目录下的所有文件
-    for file_path in local_skills_dir.rglob("*"):
+    # 遍历目录下的所有文件
+    for file_path in local_dir.rglob("*"):
         if file_path.is_file():
             # 计算相对路径
-            rel_path = file_path.relative_to(local_skills_dir)
+            rel_path = file_path.relative_to(local_dir)
             remote_path = f"{remote_base}/{rel_path}"
 
             # 读取文件内容
@@ -161,9 +134,16 @@ def upload_skills_to_sandbox(
     if upload_files:
         # 批量上传文件
         sandbox.fs.upload_files(upload_files)
-        print(f"✅ 已上传 {len(upload_files)} 个文件到沙箱")
+        print(f"✅ 已上传 {len(upload_files)} 个 {label} 文件到沙箱")
     else:
-        print("⚠️  没有文件需要上传")
+        print(f"⚠️  没有 {label} 文件需要上传")
+
+
+def upload_skills_to_sandbox(
+    sandbox, local_skills_dir: Path, remote_base: str = "/home/daytona/skills"
+):
+    """将 skills 文件夹上传到沙箱（兼容旧接口）。"""
+    upload_directory_to_sandbox(sandbox, local_skills_dir, remote_base, "skills")
 
 
 def create_daytona_backend_with_skills(ngrok_url: str | None = None):
@@ -183,17 +163,6 @@ def create_daytona_backend_with_skills(ngrok_url: str | None = None):
 
     # 准备网络白名单
     network_allow_list = None
-    if ngrok_url:
-        print(f"🔍 获取 ngrok IP 地址: {ngrok_url}")
-        ngrok_ip = get_ngrok_ip(ngrok_url)
-        if ngrok_ip:
-            # 使用 /32 表示单个 IP
-            # 注意：Daytona 最多支持 5 个 CIDR
-            network_allow_list = f"{ngrok_ip}/32"
-            print(f"✅ 将允许沙箱访问: {network_allow_list}")
-        else:
-            print("⚠️  无法获取 ngrok IP，继续创建沙箱（可能无法访问 MCP 服务）")
-
     # 创建沙箱（使用 ngrok IP 白名单）
     if network_allow_list:
         params = CreateSandboxBaseParams(network_allow_list=network_allow_list)
@@ -203,58 +172,34 @@ def create_daytona_backend_with_skills(ngrok_url: str | None = None):
 
     print(f"✅ 沙箱创建成功: {sandbox.id}")
 
-    # 诊断网络访问
-    print("\n🔍 诊断沙箱网络访问...")
-    if ngrok_url:
-        print(f"   预期可访问 ngrok: {ngrok_url}")
-    print()
-
-    try:
-        # 测试1: ping Google DNS
-        ping_result = sandbox.process.exec("ping -c 1 8.8.8.8", timeout=10)
-        print(
-            f"  ✓ Ping 8.8.8.8: {ping_result.result.strip() if ping_result.result else '成功'}"
-        )
-    except Exception as e:
-        print(f"  ✗ Ping 8.8.8.8 失败: {e}")
-
-    try:
-        # 测试2: curl 外部 HTTP
-        curl_result = sandbox.process.exec(
-            "curl -s -o /dev/null -w '%{http_code}' https://www.google.com", timeout=15
-        )
-        if curl_result.result and curl_result.result.strip() == "200":
-            print(f"  ✓ HTTPS 访问 google.com: 成功")
-        else:
-            print(f"  ✗ HTTPS 访问 google.com: 返回状态 {curl_result.result}")
-    except Exception as e:
-        print(f"  ✗ HTTPS 访问 google.com 失败: {e}")
-
-    if ngrok_url:
-        try:
-            # 测试3: 尝试访问 ngrok 地址
-            print(f"  🔄 测试访问 ngrok: {ngrok_url}/sse")
-            ngrok_result = sandbox.process.exec(
-                f"curl -s -o /dev/null -w '%{{http_code}}' --connect-timeout 10 {ngrok_url}/sse",
-                timeout=20,
-            )
-            if ngrok_result.result and ngrok_result.result.strip() == "200":
-                print(f"  ✓ ngrok 访问: 成功 (HTTP 200)")
-            else:
-                status = (
-                    ngrok_result.result.strip() if ngrok_result.result else "无响应"
-                )
-                print(f"  ⚠ ngrok 访问: HTTP {status} (可能需要检查 MCP 服务状态)")
-        except Exception as e:
-            print(f"  ✗ ngrok 访问失败: {e}")
-
     # 上传 skills 文件夹
     upload_skills_to_sandbox(sandbox, SKILLS_DIR, "/home/daytona/skills")
 
+    # 上传 data 文件夹到 sales_cli.py 期望的位置
+    # sales_cli.py 使用: Path(__file__).resolve().parent.parent / "data"
+    # 脚本在: /home/daytona/skills/万销销售场景/scripts/
+    # 所以 data 应该在: /home/daytona/skills/万销销售场景/data/
+    upload_directory_to_sandbox(
+        sandbox,
+        DATA_DIR,
+        "/home/daytona/skills/万销销售场景/data",
+        "data",
+    )
+
     # 验证上传
-    print("\n🔍 验证 skills 上传...")
+    print("\n🔍 验证上传的文件...")
     ls_result = sandbox.process.exec("find /home/daytona/skills -type f | head -10")
     print(f"沙箱中的 skills 文件:\n{ls_result.result}")
+
+    # 验证 data 文件夹存在且包含 customer_db.csv
+    ls_data_result = sandbox.process.exec("ls -la /home/daytona/skills/万销销售场景/data/")
+    print(f"\n沙箱中的 data 文件:\n{ls_data_result.result}")
+
+    # 检查 customer_db.csv 是否存在
+    check_csv = sandbox.process.exec(
+        "test -f /home/daytona/skills/万销销售场景/data/customer_db.csv && echo '✅ customer_db.csv 存在' || echo '❌ customer_db.csv 不存在'"
+    )
+    print(f"\n{check_csv.result}")
 
     # 使用 DaytonaSandbox 作为 backend
     backend = DaytonaSandbox(sandbox=sandbox)
@@ -373,85 +318,35 @@ def demo_read_sales_script(
     print("演示 2: 调用销售 MCP 工具")
     print("=" * 60)
 
-    script_path = (
-        PROJECT_ROOT / "skills" / "万销销售场景" / "scripts" / "call_sales_mcp.py"
+    sales_script_path = 'python home/daytona/skills/万销销售场景/scripts/sales_cli.py intelligent_judgment --customer-name "张三"'
+
+    result = agent.invoke(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": f"请使用 shell 命令执行'{sales_script_path}' ,并告诉我工具输出的内容",
+                }
+            ]
+        },
+        config={"configurable": {"thread_id": "demo-read"}},
     )
 
-    # 确定 base_url
-    if use_ngrok and ngrok_url:
-        base_url = ngrok_url
-        print(f"🌐 使用 ngrok 执行: {base_url}")
-        print("   （沙箱内通过 ngrok 访问 MCP）")
-    else:
-        base_url = "http://127.0.0.1:8000"
-        print(f"💻 使用本地地址: {base_url}")
-        print("   （在宿主机执行，绕过沙箱网络限制）")
-
-    # 执行脚本
-    cmd = [
-        "uv",
-        "run",
-        "python",
-        str(script_path),
-        "intelligent_judgment",
-        "--customer-name",
-        "张三",
-        "--base-url",
-        base_url,
-    ]
-
-    print(f"\n📞 执行命令: {' '.join(cmd)}")
-
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30, cwd=str(PROJECT_ROOT)
+    print("\n📝 Agent 响应:")
+    for msg in result.get("messages", []):
+        content = (
+            msg.get("content", "")
+            if isinstance(msg, dict)
+            else getattr(msg, "content", "")
         )
-
-        if result.returncode == 0:
-            output = json.loads(result.stdout)
-            print("\n✅ MCP 调用成功:")
-            print(json.dumps(output, ensure_ascii=False, indent=2))
-
-            # 让 agent 分析结果
-            agent_result = agent.invoke(
-                {
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": f"MCP 工具返回结果如下，请分析并总结:\n```json\n{json.dumps(output, ensure_ascii=False)}\n```",
-                        }
-                    ]
-                },
-                config={"configurable": {"thread_id": "demo-read"}},
-            )
-
-            print("\n📝 Agent 分析:")
-            for msg in agent_result.get("messages", []):
-                content = (
-                    msg.get("content", "")
-                    if isinstance(msg, dict)
-                    else getattr(msg, "content", "")
-                )
-                if content:
-                    print(f"  {content}")
-        else:
-            print(f"\n❌ MCP 调用失败:")
-            print(f"  返回码: {result.returncode}")
-            print(f"  错误输出: {result.stderr}")
-
-    except subprocess.TimeoutExpired:
-        print("\n❌ MCP 调用超时（30秒）")
-    except Exception as e:
-        print(f"\n❌ 执行失败: {e}")
-        import traceback
-
-        traceback.print_exc()
+        if content:
+            print(f"  {content}")
 
 
 def main():
     """主函数。"""
     print("=" * 60)
-    print("Daytona + DeepAgents 最小验证脚本（支持 ngrok 白名单）")
+    print("Daytona + DeepAgents 最小验证脚本")
     print("=" * 60)
     print()
 
@@ -460,22 +355,11 @@ def main():
     sandbox = None
 
     try:
-        # 构建 Agent（传入 ngrok URL 以配置网络白名单）
-        ngrok_url = NGROK_URL if NGROK_URL else None
-        if ngrok_url:
-            print(f"🌐 将配置 ngrok 白名单: {ngrok_url}")
-        agent, daytona, sandbox = build_agent_with_daytona(ngrok_url=ngrok_url)
+        agent, daytona, sandbox = build_agent_with_daytona()
 
         # 运行演示
         demo_list_skills(agent)
-
-        # 根据是否配置了 NGROK_URL 决定演示方式
-        if ngrok_url:
-            print("\n🌐 使用 ngrok 方案：沙箱通过 ngrok 访问 MCP")
-            demo_read_sales_script(agent, use_ngrok=True, ngrok_url=ngrok_url)
-        else:
-            print("\n💻 使用本地方案：在宿主机执行 MCP 调用")
-            demo_read_sales_script(agent, use_ngrok=False)
+        demo_read_sales_script(agent, use_ngrok=False)
 
         print("\n" + "=" * 60)
         print("✅ 所有演示完成!")

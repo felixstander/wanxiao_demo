@@ -23,7 +23,7 @@ description: 万销客户阶段判断与需求分析技能。用于代理人输�
 ### 意向分流
 
 - **高意向**：调用 `issue_policy_tool`。
-- **中意向**：调用 `claim_case_tool` 与 `personal_needs_analysis_tool`。
+- **中意向**：调用 `claim_case_tool` 与 `issue_policy_tool`。
 - **低意向**：调用 `product_knowledge_share_tool` 与 `periodic_care_tool`。
 
 
@@ -46,39 +46,33 @@ description: 万销客户阶段判断与需求分析技能。用于代理人输�
 
 ```bash
 # 智能判断客户意向
-python /home/daytona/skills/万销销售场景/scripts/call_sales_mcp.py intelligent_judgment --customer-name "张三" --base-url "http://127.0.0.1:8000"
+python /home/daytona/skills/万销销售场景/scripts/sales_cli.py intelligent_judgment --customer-name "张三" 
 
 # 出单工具
-python /home/daytona/skills/万销销售场景/scripts/call_sales_mcp.py issue_policy_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+python /home/daytona/skills/万销销售场景/scripts/sales_cli.py issue_policy_tool --customer-name "张三" 
 
 # 产品对比
-python /home/daytona/skills/万销销售场景/scripts/call_sales_mcp.py product_comparison_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+python /home/daytona/skills/万销销售场景/scripts/sales_cli.py product_comparison_tool --customer-name "张三" 
 
 # 理赔案例
-python /home/daytona/skills/万销销售场景/scripts/call_sales_mcp.py claim_case_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+python /home/daytona/skills/万销销售场景/scripts/sales_cli.py claim_case_tool --customer-name "张三" 
 
 # 个人需求分析
-python /home/daytona/skills/万销销售场景/scripts/call_sales_mcp.py personal_needs_analysis_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+python /home/daytona/skills/万销销售场景/scripts/sales_cli.py personal_needs_analysis_tool --customer-name "张三" 
 
 # 产品知识分享
-python /home/daytona/skills/万销销售场景/scripts/call_sales_mcp.py product_knowledge_share_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+python /home/daytona/skills/万销销售场景/scripts/sales_cli.py product_knowledge_share_tool --customer-name "张三" 
 
 # 代理人AI名片
-python /home/daytona/skills/万销销售场景/scripts/call_sales_mcp.py agent_ai_business_card_tool --agent-name "金牌顾问小安" --specialty "医疗险+重疾险组合规划" --base-url "http://127.0.0.1:8000"
+python /home/daytona/skills/万销销售场景/scripts/sales_cli.py agent_ai_business_card_tool --agent-name "金牌顾问小安" --specialty "医疗险+重疾险组合规划" 
 
 # 定期关怀
-python /home/daytona/skills/万销销售场景/scripts/call_sales_mcp.py periodic_care_tool --customer-name "张三" --base-url "http://127.0.0.1:8000"
+python /home/daytona/skills/万销销售场景/scripts/sales_cli.py periodic_care_tool --customer-name "张三" 
 
 # 深度引导工具
-python /home/daytona/skills/万销销售场景/scripts/call_sales_mcp.py deep_guidance_tools --customer-name "张三" --base-url "http://127.0.0.1:8000"
+python /home/daytona/skills/万销销售场景/scripts/sales_cli.py deep_guidance_tools --customer-name "张三" 
 ```
 
-也可通过环境变量设置 MCP 服务地址：
-
-```bash
-export MCP_BASE_URL="http://127.0.0.1:8000"
-python /home/daytona/skills/万销销售场景/scripts/call_sales_mcp.py intelligent_judgment --customer-name "王五"
-```
 
 
 ## 调用规则（强约束）
@@ -100,14 +94,15 @@ python /home/daytona/skills/万销销售场景/scripts/call_sales_mcp.py intelli
 #### 高意向（`issue_policy_tool`）
 输出应聚焦促成转化：
 - **保费金额**：明确展示 `annual_premium` / `monthly_premium`
-- **行动催促**：加入紧迫感话术（如"限时优惠"、"早投保早保障"）
 - **简化决策**：突出核心保障与一键投保入口
+- 内容不要超过100个字
 
-#### 中意向（`claim_case_tool`、`personal_needs_analysis_tool`）
+#### 中意向（`claim_case_tool`、`issue_policy_tool`）
 输出应侧重价值论证：
 - **分析结果**：清晰呈现需求分析结论、匹配案例数量
 - **亮点内容**：强调产品 `highlights`、理赔速度、保障范围优势
 - **对比优势**：如有产品对比，突出差异化价值点
+- 内容不要超过100个字
 
 #### 低意向（`product_knowledge_share_tool`、`periodic_care_tool`）
 输出应采用教育+关怀策略：
@@ -115,4 +110,5 @@ python /home/daytona/skills/万销销售场景/scripts/call_sales_mcp.py intelli
 - **关怀形式**：结合节日/天气等场景给出温馨提示
 - **软性引导**：不直接推销，而是建立信任与专业形象
 - **留资钩子**：提供后续咨询入口，保持长期触达可能
+- 内容不要超过100个字
 
