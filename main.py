@@ -12,6 +12,7 @@ from typing import Any, AsyncIterator
 # Patch: 修改 read_file 默认读取行数限制为 500 行
 import deepagents.middleware.filesystem as _fs_module
 import uvicorn
+
 # 尝试导入 Daytona（如果未安装则给出友好提示）
 from daytona import CreateSandboxBaseParams, Daytona, FileUpload
 from deepagents import create_deep_agent
@@ -88,6 +89,14 @@ def upload_directory_to_sandbox(
     # 遍历目录下的所有文件
     for file_path in local_dir.rglob("*"):
         if file_path.is_file():
+            # 跳过隐藏文件和系统文件
+            if file_path.name.startswith(".") or file_path.name.endswith("~"):
+                continue
+            # 跳过特定目录
+            skip_dirs = {"__pycache__", ".git", ".venv", "venv", "node_modules", ".pytest_cache"}
+            if any(part in skip_dirs for part in file_path.parts):
+                continue
+
             # 计算相对路径
             rel_path = file_path.relative_to(local_dir)
             remote_path = f"{remote_base}/{rel_path}"
@@ -103,8 +112,20 @@ def upload_directory_to_sandbox(
 
     if upload_files:
         # 批量上传文件
-        sandbox.fs.upload_files(upload_files)
-        print(f"✅ 已上传 {len(upload_files)} 个 {label} 文件到沙箱")
+        try:
+            sandbox.fs.upload_files(upload_files)
+            print(f"✅ 已上传 {len(upload_files)} 个 {label} 文件到沙箱")
+        except Exception as e:
+            print(f"⚠️  批量上传失败: {e}")
+            # 尝试逐个上传，跳过有问题的文件
+            success_count = 0
+            for upload_file in upload_files:
+                try:
+                    sandbox.fs.upload_files([upload_file])
+                    success_count += 1
+                except Exception as e2:
+                    print(f"⚠️  跳过文件 {upload_file.destination}: {e2}")
+            print(f"✅ 成功上传 {success_count}/{len(upload_files)} 个 {label} 文件")
     else:
         print(f"⚠️  没有 {label} 文件需要上传")
 
@@ -1389,11 +1410,11 @@ def create_app() -> FastAPI:
     app = FastAPI(title="AI Chat Platform", version="1.0.0")
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
-    # 应用启动时初始化 Agents（带多进程保护）
-    # 注意：只在 main() 中调用 init_agents()，避免模块导入时重复初始化
-    # init_agents()  # 已移至 main() 函数中统一调用
+    print("🚀 主进程：预加载 Agents...")
     init_agents()
+    print("✅ Agents 预加载完成，启动 Uvicorn...\n")
 
+    # 注册信号处理程序，确保程序退出时清理沙箱
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok", "model": model_name}
@@ -1486,20 +1507,9 @@ app = create_app()
 
 
 def main() -> None:
-    auto_reload = os.getenv("AUTO_RELOAD", "1") == "1"
+    auto_reload = os.getenv("AUTO_RELOAD", "0") == "1"
     port = int(os.getenv("PORT", "8005"))
 
-    # 检查是否已经在其他进程中初始化了
-    # 如果锁文件存在，说明其他进程正在初始化或已完成
-    if _INIT_LOCK_FILE.exists():
-        print("📋 检测到 Agents 正在其他进程中初始化，跳过当前进程初始化")
-    else:
-        # 在主进程中预加载 Agents（在 uvicorn 启动前）
-        print("🚀 主进程：预加载 Agents...")
-        init_agents()
-        print("✅ Agents 预加载完成，启动 Uvicorn...\n")
-
-    # 注册信号处理程序，确保程序退出时清理沙箱
     import signal
 
     def signal_handler(signum, frame):

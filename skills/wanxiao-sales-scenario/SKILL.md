@@ -3,7 +3,7 @@ name: wanxiao-sales-scenario
 description: 万销客户阶段判断与需求分析技能。用于代理人输入“客户姓名”后，判断该客户当前所处销售阶段（高意向/中意向/低意向）以及下一步最需要的支持内容（出单推进、培育解释、知识教育、定期关怀）。当用户的问题核心是“这个客户现在处于什么阶段、他现在最需要什么”时使用。
 ---
 
-# 万销销售场景（意向分流 + 工具编排 + 倒计时提醒）
+# wanxiao-sales-scenario（意向分流 + 工具编排 + 倒计时提醒）
 
 本 Skill 用于执行销售指导手册：前端展示客户画像后，代理人点击客户，先判断意向，再按意向执行对应工具，并启动倒计时监控话术。
 
@@ -46,31 +46,31 @@ description: 万销客户阶段判断与需求分析技能。用于代理人输�
 
 ```bash
 # 智能判断客户意向
-python /home/daytona/skills/万销销售场景/scripts/sales_cli.py intelligent_judgment --customer-name "张三" 
+python /home/daytona/skills/wanxiao-sales-scenario/scripts/sales_cli.py intelligent_judgment --customer-name "张三" 
 
 # 出单工具
-python /home/daytona/skills/万销销售场景/scripts/sales_cli.py issue_policy_tool --customer-name "张三" 
+python /home/daytona/skills/wanxiao-sales-scenario/scripts/sales_cli.py issue_policy_tool --customer-name "张三" 
 
 # 产品对比
-python /home/daytona/skills/万销销售场景/scripts/sales_cli.py product_comparison_tool --customer-name "张三" 
+python /home/daytona/skills/wanxiao-sales-scenario/scripts/sales_cli.py product_comparison_tool --customer-name "张三" 
 
 # 理赔案例
-python /home/daytona/skills/万销销售场景/scripts/sales_cli.py claim_case_tool --customer-name "张三" 
+python /home/daytona/skills/wanxiao-sales-scenario/scripts/sales_cli.py claim_case_tool --customer-name "张三" 
 
 # 个人需求分析
-python /home/daytona/skills/万销销售场景/scripts/sales_cli.py personal_needs_analysis_tool --customer-name "张三" 
+python /home/daytona/skills/wanxiao-sales-scenario/scripts/sales_cli.py personal_needs_analysis_tool --customer-name "张三" 
 
 # 产品知识分享
-python /home/daytona/skills/万销销售场景/scripts/sales_cli.py product_knowledge_share_tool --customer-name "张三" 
+python /home/daytona/skills/wanxiao-sales-scenario/scripts/sales_cli.py product_knowledge_share_tool --customer-name "张三" 
 
 # 代理人AI名片
-python /home/daytona/skills/万销销售场景/scripts/sales_cli.py agent_ai_business_card_tool --agent-name "金牌顾问小安" --specialty "医疗险+重疾险组合规划" 
+python /home/daytona/skills/wanxiao-sales-scenario/scripts/sales_cli.py agent_ai_business_card_tool --agent-name "金牌顾问小安" --specialty "医疗险+重疾险组合规划" 
 
 # 定期关怀
-python /home/daytona/skills/万销销售场景/scripts/sales_cli.py periodic_care_tool --customer-name "张三" 
+python /home/daytona/skills/wanxiao-sales-scenario/scripts/sales_cli.py periodic_care_tool --customer-name "张三" 
 
 # 深度引导工具
-python /home/daytona/skills/万销销售场景/scripts/sales_cli.py deep_guidance_tools --customer-name "张三" 
+python /home/daytona/skills/wanxiao-sales-scenario/scripts/sales_cli.py deep_guidance_tools --customer-name "张三" 
 ```
 
 

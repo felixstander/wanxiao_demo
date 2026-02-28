@@ -19,7 +19,6 @@ Usage:
 import argparse
 import csv
 import json
-import os
 import sys
 from datetime import date
 from pathlib import Path
@@ -29,7 +28,9 @@ from typing import Any
 # 配置和数据加载
 # =============================================================================
 
-CUSTOMER_CSV_PATH = Path("/home/daytona/skills/万销销售场景/data/customer_db.csv")
+CUSTOMER_CSV_PATH = Path(
+    "/home/daytona/skills/wanxiao-sales-scenario/data/customer_db.csv"
+)
 LIST_FIELDS = {
     "behaviors",
     "viewed_products",
