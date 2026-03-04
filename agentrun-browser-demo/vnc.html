@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgentRun Browser Sandbox - VNC Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .header {
+            background: #16213e;
+            padding: 15px 20px;
+            border-bottom: 2px solid #0f3460;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .header h1 {
+            font-size: 18px;
+            color: #e94560;
+        }
+        
+        .header .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+        }
+        
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #666;
+        }
+        
+        .status-indicator.connected {
+            background: #00d26a;
+            box-shadow: 0 0 10px #00d26a;
+        }
+        
+        .status-indicator.connecting {
+            background: #ffd700;
+            animation: pulse 1s infinite;
+        }
+        
+        .status-indicator.error {
+            background: #e94560;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .main-container {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        
+        .sidebar {
+            width: 300px;
+            background: #16213e;
+            border-right: 2px solid #0f3460;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        .control-group {
+            background: #1a1a2e;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #0f3460;
+        }
+        
+        .control-group label {
+            display: block;
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .control-group input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            background: #0f0f23;
+            border: 1px solid #0f3460;
+            border-radius: 4px;
+            color: #eee;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        
+        .control-group input[type="text"]:focus {
+            outline: none;
+            border-color: #e94560;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: #e94560;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #ff6b6b;
+        }
+        
+        .btn-secondary {
+            background: #0f3460;
+            color: #eee;
+        }
+        
+        .btn-secondary:hover {
+            background: #1a4a7a;
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .vnc-screen {
+            flex: 1;
+            background: #0f0f23;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        #vnc-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .placeholder {
+            text-align: center;
+            color: #666;
+        }
+        
+        .placeholder svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+        
+        .placeholder p {
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        
+        .info-panel {
+            background: #1a1a2e;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: 'Courier New', monospace;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        
+        .info-panel .log-entry {
+            margin: 2px 0;
+            padding: 2px 0;
+            border-bottom: 1px solid #0f3460;
+        }
+        
+        .info-panel .log-entry:last-child {
+            border-bottom: none;
+        }
+        
+        .info-panel .timestamp {
+            color: #888;
+        }
+        
+        .scale-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .scale-control input[type="range"] {
+            flex: 1;
+        }
+        
+        .scale-value {
+            min-width: 50px;
+            text-align: center;
+            font-family: monospace;
+        }
+        
+        .shortcuts {
+            font-size: 11px;
+            color: #666;
+            margin-top: 10px;
+        }
+        
+        .shortcuts kbd {
+            background: #0f0f23;
+            padding: 2px 6px;
+            border-radius: 3px;
+            border: 1px solid #0f3460;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔴 AgentRun Browser Sandbox - VNC Viewer</h1>
+        <div class="status">
+            <span>状态:</span>
+            <div class="status-indicator" id="status-indicator"></div>
+            <span id="status-text">未连接</span>
+        </div>
+    </div>
+    
+    <div class="main-container">
+        <div class="sidebar">
+            <div class="control-group">
+                <label>VNC WebSocket URL</label>
+                <input type="text" id="vnc-url" placeholder="wss://..." />
+            </div>
+            
+            <div class="btn-group">
+                <button class="btn btn-primary" id="connect-btn" onclick="connectVNC()">
+                    🔌 连接
+                </button>
+                <button class="btn btn-secondary" id="disconnect-btn" onclick="disconnectVNC()" disabled>
+                    ⏹️ 断开
+                </button>
+            </div>
+            
+            <div class="control-group">
+                <label>缩放比例</label>
+                <div class="scale-control">
+                    <input type="range" id="scale-slider" min="0.1" max="2" step="0.1" value="1" oninput="updateScale()" />
+                    <span class="scale-value" id="scale-value">100%</span>
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <label>操作</label>
+                <button class="btn btn-secondary" onclick="fullscreen()" style="width: 100%; margin-bottom: 8px;">
+                    ⛶ 全屏显示
+                </button>
+                <button class="btn btn-secondary" onclick="sendCtrlAltDel()" style="width: 100%;">
+                    Ctrl+Alt+Del
+                </button>
+            </div>
+            
+            <div class="control-group">
+                <label>日志</label>
+                <div class="info-panel" id="log-panel">
+                    <div class="log-entry">
+                        <span class="timestamp">[系统]</span> 等待连接...
+                    </div>
+                </div>
+            </div>
+            
+            <div class="shortcuts">
+                <strong>快捷键:</strong><br>
+                <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Del</kbd> - 发送 Ctrl+Alt+Del<br>
+                <kbd>鼠标滚轮</kbd> - 缩放画面
+            </div>
+        </div>
+        
+        <div class="vnc-screen" id="vnc-screen">
+            <div id="vnc-container">
+                <div class="placeholder">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                        <line x1="8" y1="21" x2="16" y2="21"></line>
+                        <line x1="12" y1="17" x2="12" y2="21"></line>
+                    </svg>
+                    <h3>未连接到 VNC</h3>
+                    <p>请在左侧输入 VNC WebSocket URL 并点击连接</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        // 从 URL 参数获取 VNC URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const vncUrlFromParams = urlParams.get('url');
+        
+        // 如果有 URL 参数，自动填充
+        if (vncUrlFromParams) {
+            document.getElementById('vnc-url').value = decodeURIComponent(vncUrlFromParams);
+            log('从 URL 参数自动填充 VNC URL');
+        }
+        
+        let rfb = null;
+        let currentScale = 1;
+        
+        // 加载 noVNC 库
+        async function loadNoVNC() {
+            try {
+                const module = await import('https://cdn.jsdelivr.net/gh/novnc/noVNC@v1.4.0/core/rfb.js');
+                return module.default;
+            } catch (e) {
+                log('加载 noVNC 库失败: ' + e.message, 'error');
+                throw e;
+            }
+        }
+        
+        // 连接 VNC
+        window.connectVNC = async function() {
+            const url = document.getElementById('vnc-url').value.trim();
+            
+            if (!url) {
+                log('请输入 VNC URL', 'error');
+                return;
+            }
+            
+            if (!url.startsWith('wss://') && !url.startsWith('ws://')) {
+                log('VNC URL 必须以 wss:// 或 ws:// 开头', 'error');
+                return;
+            }
+            
+            try {
+                setStatus('connecting');
+                log('正在连接到 VNC...');
+                
+                const RFB = await loadNoVNC();
+                
+                // 创建 VNC 容器
+                const container = document.getElementById('vnc-container');
+                container.innerHTML = '';
+                
+                // 创建 canvas 元素
+                const screen = document.createElement('div');
+                screen.id = 'vnc-screen-canvas';
+                screen.style.width = '100%';
+                screen.style.height = '100%';
+                container.appendChild(screen);
+                
+                // 创建 RFB 连接
+                rfb = new RFB(screen, url, {
+                    shared: true,
+                    credentials: { password: '' }
+                });
+                
+                // 设置缩放
+                rfb.scaleViewport = true;
+                rfb.resizeSession = true;
+                
+                // 事件监听
+                rfb.addEventListener('connect', () => {
+                    setStatus('connected');
+                    log('VNC 连接成功');
+                    document.getElementById('connect-btn').disabled = true;
+                    document.getElementById('disconnect-btn').disabled = false;
+                });
+                
+                rfb.addEventListener('disconnect', () => {
+                    setStatus('disconnected');
+                    log('VNC 连接已断开');
+                    document.getElementById('connect-btn').disabled = false;
+                    document.getElementById('disconnect-btn').disabled = true;
+                });
+                
+                rfb.addEventListener('credentialsrequired', () => {
+                    log('需要密码认证', 'warning');
+                });
+                
+                rfb.addEventListener('securityfailure', (e) => {
+                    log('安全认证失败: ' + e.detail.reason, 'error');
+                    setStatus('error');
+                });
+                
+                rfb.addEventListener('desktopname', (e) => {
+                    log('桌面名称: ' + e.detail.name);
+                });
+                
+            } catch (e) {
+                log('连接失败: ' + e.message, 'error');
+                setStatus('error');
+            }
+        };
+        
+        // 断开 VNC
+        window.disconnectVNC = function() {
+            if (rfb) {
+                rfb.disconnect();
+                rfb = null;
+            }
+            
+            // 重置容器
+            const container = document.getElementById('vnc-container');
+            container.innerHTML = `
+                <div class="placeholder">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                        <line x1="8" y1="21" x2="16" y2="21"></line>
+                        <line x1="12" y1="17" x2="12" y2="21"></line>
+                    </svg>
+                    <h3>未连接到 VNC</h3>
+                    <p>请在左侧输入 VNC WebSocket URL 并点击连接</p>
+                </div>
+            `;
+            
+            document.getElementById('connect-btn').disabled = false;
+            document.getElementById('disconnect-btn').disabled = true;
+            setStatus('disconnected');
+            log('已断开连接');
+        };
+        
+        // 更新缩放
+        window.updateScale = function() {
+            const slider = document.getElementById('scale-slider');
+            const value = slider.value;
+            currentScale = parseFloat(value);
+            document.getElementById('scale-value').textContent = Math.round(currentScale * 100) + '%';
+            
+            if (rfb) {
+                // noVNC 1.4.0 支持 scaleViewport
+                rfb.scaleViewport = true;
+            }
+        };
+        
+        // 全屏
+        window.fullscreen = function() {
+            const elem = document.getElementById('vnc-screen');
+            if (elem.requestFullscreen) {
+                elem.requestFullscreen();
+            } else if (elem.webkitRequestFullscreen) {
+                elem.webkitRequestFullscreen();
+            } else if (elem.msRequestFullscreen) {
+                elem.msRequestFullscreen();
+            }
+        };
+        
+        // 发送 Ctrl+Alt+Del
+        window.sendCtrlAltDel = function() {
+            if (rfb) {
+                rfb.sendCtrlAltDel();
+                log('已发送 Ctrl+Alt+Del');
+            } else {
+                log('未连接到 VNC', 'warning');
+            }
+        };
+        
+        // 设置状态
+        function setStatus(status) {
+            const indicator = document.getElementById('status-indicator');
+            const text = document.getElementById('status-text');
+            
+            indicator.className = 'status-indicator';
+            
+            switch(status) {
+                case 'connected':
+                    indicator.classList.add('connected');
+                    text.textContent = '已连接';
+                    break;
+                case 'connecting':
+                    indicator.classList.add('connecting');
+                    text.textContent = '连接中...';
+                    break;
+                case 'error':
+                    indicator.classList.add('error');
+                    text.textContent = '连接错误';
+                    break;
+                default:
+                    text.textContent = '未连接';
+            }
+        }
+        
+        // 日志
+        function log(message, type = 'info') {
+            const panel = document.getElementById('log-panel');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            
+            let prefix = 'ℹ️';
+            if (type === 'error') prefix = '❌';
+            if (type === 'warning') prefix = '⚠️';
+            if (type === 'success') prefix = '✅';
+            
+            entry.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${prefix} ${message}`;
+            panel.appendChild(entry);
+            panel.scrollTop = panel.scrollHeight;
+        }
+        
+        // 自动连接（如果 URL 参数中有 VNC URL）
+        if (vncUrlFromParams) {
+            setTimeout(() => {
+                connectVNC();
+            }, 500);
+        }
+    </script>
+</body>
+</html>

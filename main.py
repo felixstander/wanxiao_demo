@@ -844,7 +844,7 @@ def init_agents() -> None:
         print("⏳ 检测到其他进程正在初始化 Agents，等待中...")
 
         # 等待其他进程完成初始化（通过轮询检查 AGENT 是否被设置）
-        timeout = 60.0
+        timeout = 1.0
         start = time.time()
         while time.time() - start < timeout:
             if _AGENTS_INITIALIZED or AGENT is not None:
@@ -1510,7 +1510,9 @@ def create_app() -> FastAPI:
     return app
 
 
-app = create_app()
+app: FastAPI | None = None
+if __name__ != "__main__":
+    app = create_app()
 
 
 def main() -> None:
@@ -1528,7 +1530,11 @@ def main() -> None:
     signal.signal(signal.SIGTERM, signal_handler)
 
     try:
-        uvicorn.run("main:app", host="0.0.0.0", port=port, reload=auto_reload)
+        if auto_reload:
+            uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
+        else:
+            local_app = create_app()
+            uvicorn.run(local_app, host="0.0.0.0", port=port, reload=False)
     finally:
         # 确保沙箱被清理
         cleanup_daytona()
