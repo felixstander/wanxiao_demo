@@ -306,11 +306,12 @@ def create_monitored_agent():
     所有节点调用（planning, execution, observation, final_answer 等）
     都会被自动追踪并在 Phoenix UI 中可视化
     """
-    from deepagents import create_deep_agent
     from deepagents.backends import FilesystemBackend
     from langchain_core.tools import Tool
     from langchain_openai import ChatOpenAI
     from langgraph.store.memory import InMemoryStore
+
+    from deepagents import create_deep_agent
 
     if USE_LOCAL_LLM:
         # 使用本地 LLM 服务
