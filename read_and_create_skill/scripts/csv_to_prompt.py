@@ -52,7 +52,7 @@ def generate_prompt(headers, row_data):
     return "\n\n".join(normal_parts + testcase_parts)
 
 
-def generate_all_prompts(file_path, output_file=None):
+def generate_all_prompts(file_path):
     """生成所有数据行的提示词"""
     headers, data_rows = read_csv_file(file_path)
 
@@ -62,18 +62,7 @@ def generate_all_prompts(file_path, output_file=None):
         prompts.append(f"=== 第 {i + 1} 条记录 ===\n{prompt}")
 
     result = "\n\n" + "=" * 50 + "\n\n".join(prompts)
-
-    if output_file:
-        try:
-            with open(output_file, "w", encoding="utf-8") as f:
-                f.write(result)
-            print(f"提示词已保存到：{output_file}")
-        except Exception as e:
-            print(f"保存文件时出错：{e}", file=sys.stderr)
-            sys.exit(1)
-    else:
-        print(result)
-
+    print(result)
     return result
 
 
@@ -82,28 +71,19 @@ def main():
         description="读取CSV文件，将字段名和内容拼接为提示词",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-示例：
-  python3 csv_to_prompt.py data.csv
-  python3 csv_to_prompt.py data.csv -o prompts.txt
-  python3 csv_to_prompt.py data.csv --output result.txt
+        示例：
+        python3 csv_to_prompt.py data
         """,
     )
 
     parser.add_argument("file", help="CSV文件名（会自动拼接为 ../data/{文件名}）")
 
-    parser.add_argument(
-        "-o",
-        "--output",
-        metavar="OUTPUT_FILE",
-        help="输出文件路径（可选，默认输出到控制台）",
-    )
-
     args = parser.parse_args()
 
     script_dir = Path(__file__).parent.resolve()
-    file_path = script_dir.parent / "data" / args.file
+    file_path = script_dir.parent / "data" / f"{args.file}.csv"
 
-    generate_all_prompts(str(file_path), args.output)
+    generate_all_prompts(str(file_path))
 
 
 if __name__ == "__main__":
