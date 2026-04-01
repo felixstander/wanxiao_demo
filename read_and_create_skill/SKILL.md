@@ -128,22 +128,23 @@ skills/
 
 ## 接口方法
 
-\`\`\`bash
+```bash
 {tool_method}
-\`\`\`
+```
 
 ## 接口入参
 
-\`\`\`json
+```json
 {tool_input}
-\`\`\`
+```
+
 
 ## 接口出参
 
-\`\`\`json
+```json
 {tool_output}
-\`\`\`
 ```
+
 
 #### 5.3 生成子场景文档（Sheet2-N）
 
