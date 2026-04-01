@@ -254,24 +254,22 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
         示例：
-        python3 csv_to_prompt.py data.csv
-        python3 csv_to_prompt.py data.xlsx
+        python3 csv_to_prompt.py /workspace/uploaded/data.csv
+        python3 csv_to_prompt.py /workspace/uploaded/data.xlsx
         """,
     )
 
     parser.add_argument(
-        "file", help="数据文件名，支持 .csv 或 .xlsx（会自动拼接为 ../data/{文件名}）"
+        "file", help="数据文件的完整路径（包含 .csv 或 .xlsx 后缀）"
     )
 
     args = parser.parse_args()
 
-    script_dir = Path(__file__).parent.resolve()
-    file_name = args.file
+    file_path = Path(args.file)
 
-    if not file_name.endswith(".csv") and not file_name.endswith(".xlsx"):
-        file_name = f"{file_name}.xlsx"
-
-    file_path = script_dir.parent / "data" / file_name
+    if not file_path.exists():
+        print(f"错误：文件 '{file_path}' 不存在", file=sys.stderr)
+        sys.exit(1)
 
     skill_input = generate_all_prompts(str(file_path))
 

@@ -21,7 +21,7 @@ description: |
 
 ## 说明
 
-本技能用于基于用户提供的 Excel/CSV 表格自动创建 Agent 技能包。用户将填好的表格放在 `data/` 文件夹中，提供表格文件名后，本技能会读取表格内容并生成完整的 skill 技能包。
+本技能用于基于用户提供的 Excel/CSV 表格自动创建 Agent 技能包。用户通过前端上传表格文件后，文件将存放在 `/workspace/uploaded/` 目录下，本技能会读取表格内容并生成完整的 skill 技能包。
 
 表格可以包含多个 Sheet：
 - **Sheet1**: 主技能定义（必须）
@@ -31,7 +31,7 @@ description: |
 
 ### 1. 表格文件准备
 
-用户需将填好的表格文件（.csv 或 .xlsx 格式）放置在 `read_and_create_skill/data/` 目录下。
+用户通过前端上传表格文件（.csv 或 .xlsx 格式），文件将自动存放在 `/workspace/uploaded/` 目录下。
 
 **表格结构要求：**
 - Sheet1：主技能信息（使用场景、SOP、接口定义等）
@@ -40,23 +40,25 @@ description: |
 ### 2. 用户输入格式
 
 用户会以如下形式提供表格名称：
-- "我有个叫 xxx 的表格"
-- "帮我基于 xxx 表格生成技能"
-- "用 xxx.xlsx 创建一个新技能"
+- "我有个叫 xxx.xlsx 的表格"
+- "帮我基于 xxx.xlsx 表格生成技能"
+- "用 xxx.csv 创建一个新技能"
 
-**你需要从用户输入中提取表格文件名**（不带后缀）。
+**你需要从用户输入中提取表格文件名（包含 .xlsx 或 .csv 后缀）**。
+
+前端上传的文件会存放在 `/workspace/uploaded/{文件名}` 路径下。
 
 ### 3. 读取表格内容
 
 使用 `scripts/csv_to_prompt.py` 脚本读取表格内容：
 
 ```bash
-python read_and_create_skill/scripts/csv_to_prompt.py <表格文件名>
+python read_and_create_skill/scripts/csv_to_prompt.py /workspace/uploaded/<表格文件名.xlsx>
 ```
 
 **注意**：
-- 只需提供文件名，不需要 `.csv` 或者 `.xlsx` 后缀
-- 脚本会自动在 `data/` 目录下查找对应文件
+- 文件名已经包含 `.csv` 或 `.xlsx` 后缀
+- 文件完整路径为 `/workspace/uploaded/{文件名}`
 - 脚本会读取所有 Sheet，并按 Sheet 分组显示内容
 
 ### 4. 解析表格字段
@@ -242,23 +244,25 @@ description: |
 
 ## 完整执行示例
 
-假设用户说："我有个叫 policy_search 的表格，帮我生成技能"
+假设用户说："我有个叫 policy_search.xlsx 的表格，帮我生成技能"
 
 执行步骤：
 
-1. **提取文件名**：`policy_search`
+1. **提取文件名**：`policy_search.xlsx`
 
-2. **读取表格**：
+2. **确认文件路径**：`/workspace/uploaded/policy_search.xlsx`
+
+3. **读取表格**：
    ```bash
-   python3 read_and_create_skill/scripts/csv_to_prompt.py policy_search
+   python3 read_and_create_skill/scripts/csv_to_prompt.py /workspace/uploaded/policy_search.xlsx
    ```
 
-3. **解析输出**：脚本会返回所有 Sheet 的内容，例如：
+4. **解析输出**：脚本会返回所有 Sheet 的内容，例如：
    - Sheet 1: policy-search（主技能）
    - Sheet 2: 保单导出（子场景）
    - Sheet 3: 理赔查询（子场景）
 
-4. **创建目录结构**：
+5. **创建目录结构**：
    ```
    skills/
    └── policy-search/
@@ -269,25 +273,26 @@ description: |
            └── claim-query.md
    ```
 
-5. **生成文件**：
+6. **生成文件**：
    - `tool.md`：写入 Sheet1 的开发字段
-   - `policy-export.md`基于 Sheet2 生成子场景文档
-   - `claim-query.md`基于 Sheet3 生成子场景文档
+   - `policy-export.md`：基于 Sheet2 生成子场景文档
+   - `claim-query.md`：基于 Sheet3 生成子场景文档
    - `SKILL.md`：基于 Sheet1 生成主技能文档，包含子场景引用
 
 ## 错误处理
 
 执行过程中可能遇到以下情况：
 
-1. **表格文件不存在**：提示用户检查 `read_and_create_skill/data/` 目录下是否有该文件
+1. **表格文件不存在**：提示用户检查 `/workspace/uploaded/` 目录下是否有该文件
 2. **格式错误**：确保文件使用 UTF-8 编码，Excel 文件需安装 openpyxl（`pip install openpyxl`）
 3. **字段缺失**：如果表格缺少必要字段（如 SKILL名称、description），需提示用户补充
 4. **脚本执行失败**：检查 Python 环境是否正常，脚本路径是否正确
 
 ## 注意事项
 
-1. **文件名处理**：
-   - 从用户输入提取的文件名可能包含或不含后缀，需统一处理
+1. **文件路径**：
+   - 前端上传的文件存放在 `/workspace/uploaded/` 目录下
+   - 文件名已经包含 `.csv` 或 `.xlsx` 后缀
    - SKILL名称建议转为小写，空格替换为连字符（如 `Policy Search` → `policy-search`）
 
 2. **子场景文件名**：
