@@ -1,4 +1,4 @@
-# 计划模块：问题拆分与执行策略
+# 计划模块：问题拆分与工具选择
 
 ## 目标
 将用户复杂问题拆解为可独立执行的子问题序列，确保每个子问题：
@@ -6,106 +6,237 @@
 - 工具明确（知道用哪个工具）
 - 可验证（有明确的成功标准）
 
-## 拆分策略
+## 问题拆分策略
 
-### 类型 1：多意图问题（必须拆分）
-**识别特征**：包含"和"、"以及"、"顺便"、"还有"等连接词，或同时涉及多个独立主题
+### 1.1 需要拆分的情况
 
-示例：
-- "我想买重疾险，现在最好的产品是什么，保费多少，怎么理赔"
-  - 子问题 1：查询当前在售重疾险产品列表（内部工具）
-  - 子问题 2：获取某具体产品的保费计算（内部工具）
-  - 子问题 3：查询该产品理赔流程（内部工具）
+当用户问题符合以下特征时，必须进行拆分：
 
-### 类型 2：对比类问题（必须拆分）
-**识别特征**：包含"对比"、"vs"、"哪个更好"、"有什么区别"、"和...相比"等关键词
+| 特征类型 | 具体表现 | 示例 |
+|---------|---------|------|
+| 多产品查询 | 包含多个产品名称 | "A产品和B产品哪个好" |
+| 多维度询问 | 询问同一产品的多个方面 | "XX重疾险的等待期和保额上限是多少" |
+| 对比类问题 | 包含"对比"、"比较"、"vs"等词 | "平安福和国寿福有什么区别" |
+| 多子问题 | 用"和"、"以及"、"分别"连接 | "A产品保什么，B产品怎么理赔" |
+| 混合信息 | 同时需要内部资料和外部信息 | "XX产品的条款和最新监管政策" |
 
-示例：
-- "A产品和B产品哪个保障更全面"
-  - 子问题 1：查询A产品保障范围（内部工具）
-  - 子问题 2：查询B产品保障范围（内部工具）
-  - 子问题 3：（无需工具）基于前两步结果生成对比分析
+### 1.2 拆分执行流程
 
-**注意**：对比类问题禁止直接调用工具问"A和B哪个更好"，因为：
-1. 工具可能不支持比较类查询
-2. 需要分别获取完整信息后才能客观比较
-3. 避免工具返回主观判断而非客观数据
+```
+接收问题
+    ↓
+识别问题类型（单产品/多产品/对比/混合）
+    ↓
+提取关键实体（产品名称、属性、时间等）
+    ↓
+拆分为独立子问题
+    ↓
+为每个子问题分配工具
+    ↓
+确定执行顺序（并行/串行）
+    ↓
+生成执行计划
+```
 
-### 类型 3：混合信息问题（必须拆分）
-**识别特征**：同时涉及保险专业知识+实时外部信息
+### 1.3 子问题定义规范
 
-示例：
-- "最近有什么新的保险政策吗，对我买的XX险有影响吗"
-  - 子问题 1：搜索最新保险政策新闻（外部搜索）
-  - 子问题 2：查询XX险现有条款（内部工具）
-  - 子问题 3：（无需工具）分析政策对条款的潜在影响
-
-**关键原则**：
-- 保险部分必须用 `product_answer.py`
-- 外部信息部分必须用 `web_search.py`
-- 两个子问题必须独立执行，禁止合并为一个查询
-
-### 类型 4：条件依赖问题（必须串行）
-**识别特征**：后一个问题依赖前一个问题的答案
-
-示例：
-- "30岁男性买50万保额的重疾险多少钱"
-  - 子问题 1：确认30岁男性可购买的重疾险产品（内部工具）
-  - 子问题 2：基于上一步返回的产品，查询50万保额保费（内部工具）
-
-**执行要求**：
-- 必须等待子问题1返回后，提取产品名称
-- 子问题2的查询词必须包含子问题1返回的具体产品名
-- 禁止假设产品名称直接执行子问题2
-
-## 执行计划格式
-
-每个执行计划必须包含：
+每个子问题必须包含以下要素：
 
 ```yaml
-plan:
-  original_question: "用户原始问题"
-  sub_questions:
-    - id: 1
-      query: "具体问题描述"
-      tool: "internal_insurance|web_search|none"
-      dependency: null| [1]  # 依赖哪些前置子问题
-      validation_criteria: "如何验证这个答案是否成功"
-      fallback_action: "失败时如何处理"
-    
-    - id: 2
-      query: "..."
-      tool: "..."
-      dependency: [1]
-      
-  merge_strategy: "如何合并多个子问题的答案"
-  risk_flags: ["潜在风险点1", "风险点2"]
+sub_problem:
+  id: "SP001"                    # 子问题编号
+  type: "product_query"          # 问题类型：product_query/attribute_query/tool_query/web_query
+  question: "查询XX产品的等待期"  # 具体问题描述
+  tool: "product_attribute_detail" # 推荐工具
+  parameters:                    # 工具参数
+    productName: "XX重疾险"
+    attributeType: "产品投保规则"
+  dependencies: []               # 依赖的其他子问题ID
+  parallelizable: true           # 是否可并行执行
 ```
+
+### 1.4 问题类型识别矩阵
+
+| 问题关键词 | 问题类型 | 推荐工具 | 参数要点 |
+|-----------|---------|---------|---------|
+| "保什么"、"保障"、"责任" | 内容检索 | product_content_search | contentType=产品险种列表 |
+| "条款"、"说明书" | 内容检索 | product_content_search | contentType=产品说明书 |
+| "投保规则"、"年龄"、"健康告知" | 属性查询 | product_attribute_detail | attributeType=产品投保规则 |
+| "费率"、"多少钱"、"保费" | 属性查询 | product_attribute_detail | attributeType=产品基本信息 |
+| "责任详情"、"具体责任" | 工具接口 | product_tool_interface | mktProdCode + requestFields |
+| "竞品"、"对比"、"市场" | 外部搜索 | web_search | --question |
 
 ## 工具选择决策树
 
-问题是关于...?
-├── 保险条款、产品、费率、理赔、保单查询
-│   └── → 内部保险工具 (product_answer.py)
-├── 实时新闻、天气、政策、市场动态
-│   └── → 外部搜索工具 (web_search.py)
-├── 保险知识+外部信息混合
-│   └── → 拆分为两个子问题，分别使用对应工具
-└── 开放式建议（"我应该买什么保险"）
-    └── → 先内部工具查用户已有保单 → 再外部搜索市场趋势 → 最后综合分析
+```
+用户问题
+    ↓
+是否涉及具体产品？
+    ├─ 否 → 是否需要分类浏览？
+    │          ├─ 是 → product_content_search (contentType=产品险种列表)
+    │          └─ 否 → uncertain.md (反问模块)
+    ↓
+是
+    ↓
+是否知道产品编码？
+    ├─ 是 → product_tool_interface (查责任详情)
+    └─ 否 → 需要查询什么信息？
+               ├─ 产品基本信息 → product_attribute_detail (attributeType=产品基本信息)
+               ├─ 投保规则 → product_attribute_detail (attributeType=产品投保规则)
+               ├─ 产品说明书 → product_content_search (contentType=产品说明书)
+               ├─ 险种列表 → product_content_search (contentType=产品险种列表)
+               └─ 责任详情 → 先product_attribute_detail获取productCode，再product_tool_interface
+```
 
-## Gotchas（计划阶段常见错误）
+## 特殊场景处理
 
-1. **过度拆分**：不要把简单问题拆太碎，增加调用开销
-   - 错误："XX险的保费是多少"拆成"什么是XX险"+"XX险保费"
-   - 正确：直接查询XX险保费信息（内部工具支持一次性查询）
+### 3.1 对比类问题拆分
 
-2. **忽视依赖关系**：并行调用有依赖关系的子问题
-   - 错误：同时问"有哪些重疾险"和"XX重疾险保费多少"
-   - 正确：先执行1，拿到具体产品名后再执行2
+**场景**：用户询问"A产品和B产品哪个更好"
 
-3. **工具选择错误**：
-   - 错误：用外部搜索查询具体保单信息（隐私泄露风险）
-   - 正确：保单信息必须通过内部工具查询
+**拆分方案**：
 
-4. **遗漏验证步骤**：计划中必须包含每个子问题的验证标准
+```yaml
+sub_problems:
+  - id: "SP001"
+    type: "product_query"
+    question: "查询A产品的基本信息和保障责任"
+    tool: "product_attribute_detail"
+    parameters:
+      productName: "A产品"
+      attributeType: "产品基本信息,产品险种列表"
+  
+  - id: "SP002"
+    type: "product_query"
+    question: "查询B产品的基本信息和保障责任"
+    tool: "product_attribute_detail"
+    parameters:
+      productName: "B产品"
+      attributeType: "产品基本信息,产品险种列表"
+  
+  - id: "SP003"
+    type: "comparison"
+    question: "基于SP001和SP002的结果进行对比分析"
+    tool: "analysis"
+    dependencies: ["SP001", "SP002"]
+```
+
+**执行顺序**：SP001和SP002并行执行 → SP003串行执行
+
+### 3.2 混合信息问题拆分
+
+**场景**：用户询问"XX重疾险的最新条款和当前市场评价"
+
+**拆分方案**：
+
+```yaml
+sub_problems:
+  - id: "SP001"
+    type: "product_query"
+    question: "查询XX重疾险的产品说明书"
+    tool: "product_content_search"
+    parameters:
+      productName: "XX重疾险"
+      contentType: "产品说明书"
+    parallelizable: true
+  
+  - id: "SP002"
+    type: "web_query"
+    question: "搜索XX重疾险的市场评价和口碑"
+    tool: "web_search"
+    parameters:
+      question: "XX重疾险 市场评价 口碑 测评"
+    parallelizable: true
+  
+  - id: "SP003"
+    type: "synthesis"
+    question: "整合内部条款和外部评价"
+    tool: "analysis"
+    dependencies: ["SP001", "SP002"]
+```
+
+**执行顺序**：SP001和SP002并行执行 → SP003串行执行
+
+### 3.3 条件依赖问题
+
+**场景**：需要先查询A产品信息，再根据结果查询B产品
+
+**处理原则**：
+- 明确标识依赖关系
+- 串行执行依赖链
+- 前置问题失败时，终止后续执行
+
+```yaml
+sub_problems:
+  - id: "SP001"
+    type: "product_query"
+    question: "查询A产品的升级版本"
+    tool: "product_attribute_detail"
+  
+  - id: "SP002"
+    type: "product_query"
+    question: "查询A产品升级版的详细责任"
+    tool: "product_tool_interface"
+    dependencies: ["SP001"]  # 依赖SP001的结果
+```
+
+## 执行计划生成模板
+
+```yaml
+plan:
+  version: "1.0"
+  original_question: "用户原始问题"
+  analysis:
+    intent: "用户意图"
+    entities:
+      - type: "product"
+        value: "产品名称"
+      - type: "attribute"
+        value: "属性类型"
+  sub_problems:
+    - id: "SP001"
+      type: "..."
+      question: "..."
+      tool: "..."
+      parameters: {...}
+      dependencies: []
+      parallelizable: true/false
+  execution_order:
+    - phase: 1
+      tasks: ["SP001", "SP002"]
+      mode: "parallel"
+    - phase: 2
+      tasks: ["SP003"]
+      mode: "sequential"
+  fallback_strategy:
+    - condition: "工具返回空结果"
+      action: "调整参数重试"
+    - condition: "信息不足"
+      action: "调用web_search补充"
+```
+
+## 常见错误避免
+
+### 5.1 过度拆分
+
+**错误示例**：将"XX产品的等待期和免赔额是多少"拆分为两个子问题
+
+**正确处理**：这是同一产品的不同属性，可以一次查询product_attribute_detail的多个attributeType
+
+### 5.2 遗漏依赖
+
+**错误示例**：对比两个产品时，未识别需要分别查询两个产品信息
+
+**正确处理**：对比类问题必须拆分为至少两个独立的产品查询子问题
+
+### 5.3 工具选择错误
+
+**错误示例**：查询责任详情时直接使用product_attribute_detail
+
+**正确处理**：责任详情需要通过product_tool_interface查询，需要mktProdCode
+
+### 5.4 参数遗漏
+
+**错误示例**：查询产品内容时未指定contentType
+
+**正确处理**：必须根据问题类型选择合适的contentType，否则可能返回不相关信息
