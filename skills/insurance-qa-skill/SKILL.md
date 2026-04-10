@@ -44,7 +44,7 @@ license: Proprietary - Ping An Insurance
 ### 2. 工具选择优先级
 
 ```
-优先级1（内部资料）: 保险产品内容检索 → 保险产品属性详情 → 产品工具接口
+优先级1（内部资料）: 保险产品内容检索 → 保险产品属性详情
 优先级2（外部补充）: web_search.py（仅当内部资料不足时）
 ```
 
@@ -117,7 +117,6 @@ license: Proprietary - Ping An Insurance
 |---------|---------|---------|---------|
 | 保险产品内容检索 | `scripts/product_content_search.py` | 根据内容类型检索产品列表 | 需要查找产品、了解产品分类时 |
 | 保险产品属性详情 | `scripts/product_attribute_detail.py` | 查询产品具体属性信息 | 需要产品详细信息时 |
-| 产品工具接口 | `scripts/product_tool_interface.py` | 通过MP_CODE查询责任详情 | 需要责任详细信息时 |
 | 网页搜索 | `scripts/web_search.py` | 补充外部产品信息 | 内部资料不足时 |
 
 ## 渐进式披露
@@ -136,6 +135,7 @@ license: Proprietary - Ping An Insurance
 ## 常见坑点（Gotchas）
 
 1. **产品名称歧义**：同一产品可能有多个版本或别名，需要通过产品编码确认
+2. **多值参数格式**：`contentType` 和 `attributeType` 支持多个值，需用空格分隔（如 `"类型1" "类型2"`），不要用逗号
 3. **生效状态过滤**：查询时要关注产品是否处于"生效"状态，避免返回已停售产品
 4. **外部信息标识**：使用外部搜索结果时，必须用引用格式标注来源，不可与内部资料混淆
 5. **多产品对比**：对比时要确保字段对齐，避免A产品的A字段对比B产品的B字段
