@@ -10,22 +10,26 @@
   <div class="chat-shell">
     <aside class="memory-column">
       <div class="memory-toolbar">
-        <div class="memory-toolbar-title">记忆面板</div>
+        <div class="memory-toolbar-title">谈判状态面板</div>
         <div class="memory-toolbar-actions">
+          <label style="display: flex; align-items: center; gap: 5px; font-size: 12px; color: #666; margin-right: 10px;">
+            <input type="checkbox" id="middlewareToggle" checked />
+            启用中间件
+          </label>
           <span class="memory-updated-at" id="memoryUpdatedAt">更新时间: --</span>
           <button class="memory-refresh-btn" id="memoryRefreshBtn" type="button">刷新</button>
         </div>
       </div>
 
       <section class="memory-card side-memory-card">
-        <div class="memory-title">短期记忆（最近两天）</div>
+        <div class="memory-title">当前事实（DB 数据）</div>
         <div class="memory-content" id="shortMemoryContent">
           <div class="memory-empty">加载中...</div>
         </div>
       </section>
 
       <section class="memory-card side-memory-card">
-        <div class="memory-title">长期记忆</div>
+        <div class="memory-title">策略推荐</div>
         <div class="memory-content" id="longMemoryContent">
           <div class="memory-empty">加载中...</div>
         </div>

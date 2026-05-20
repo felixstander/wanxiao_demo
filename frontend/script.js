@@ -31,12 +31,21 @@ class ChatApp {
 
     this.loadCustomers();
     this.loadSkills();
-    this.loadMemories({ force: true });
+    this.loadNegotiationState({ force: true });
     this.startMemoryMonitor();
 
     if (this.memoryRefreshBtn) {
       this.memoryRefreshBtn.addEventListener("click", () => {
-        this.loadMemories({ force: true });
+        this.loadNegotiationState({ force: true });
+      });
+    }
+
+    // 中间件开关
+    this.middlewareToggle = document.getElementById("middlewareToggle");
+    if (this.middlewareToggle) {
+      this.middlewareToggle.addEventListener("change", () => {
+        const enabled = this.middlewareToggle.checked;
+        this.addSystemMessage(`中间件已${enabled ? "启用" : "禁用"}`);
       });
     }
 
@@ -47,17 +56,25 @@ class ChatApp {
     });
   }
 
+  addSystemMessage(text) {
+    const el = document.createElement("div");
+    el.className = "message system-message";
+    el.innerHTML = `<div class="message-content"><p><em>${this.escapeHtml(text)}</em></p></div>`;
+    this.chatMessages.appendChild(el);
+    this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+  }
+
   startMemoryMonitor() {
     if (this.memoryPollTimer) {
       clearInterval(this.memoryPollTimer);
     }
 
     this.memoryPollTimer = setInterval(() => {
-      this.loadMemories({ silent: true });
+      this.loadNegotiationState({ silent: true });
     }, 4000);
   }
 
-  async loadMemories(options = {}) {
+  async loadNegotiationState(options = {}) {
     const { force = false, silent = false } = options;
     if (!this.shortMemoryContent || !this.longMemoryContent) {
       return;
@@ -73,35 +90,37 @@ class ChatApp {
     }
 
     try {
-      const response = await fetch(`/api/memories?ts=${Date.now()}`);
-      if (!response.ok) {
-        throw new Error(`Request failed (${response.status})`);
+      const userId = "web-user";
+      // 并行获取事实和策略
+      const [stateRes, strategyRes] = await Promise.all([
+        fetch(`/api/negotiation_state?user_id=${userId}&ts=${Date.now()}`),
+        fetch(`/api/strategy`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: userId, current_input: "" }),
+        }),
+      ]);
+
+      if (!stateRes.ok) throw new Error(`State API failed (${stateRes.status})`);
+      if (!strategyRes.ok) throw new Error(`Strategy API failed (${strategyRes.status})`);
+
+      const statePayload = await stateRes.json();
+      const strategyPayload = await strategyRes.json();
+
+      const facts = statePayload.facts || {};
+      const strategy = strategyPayload.strategy || {};
+
+      this.renderFacts(facts);
+      this.renderStrategy(strategy, facts);
+
+      if (this.memoryUpdatedAt) {
+        this.memoryUpdatedAt.textContent = `更新时间: ${this.formatDateTime(new Date())}`;
       }
-
-      const payload = await response.json();
-      const nextVersion =
-        typeof payload.version === "string" || typeof payload.version === "number"
-          ? String(payload.version)
-          : "";
-
-      if (!force && nextVersion && this.memoryVersion && nextVersion === this.memoryVersion) {
-        return;
-      }
-
-      this.memoryVersion = nextVersion || this.memoryVersion;
-      const shortTerm = Array.isArray(payload.short_term) ? payload.short_term : [];
-      const longTerm = payload.long_term && typeof payload.long_term === "object" ? payload.long_term : {};
-
-      this.renderShortMemories(shortTerm);
-      this.renderLongMemory(longTerm);
-      this.updateMemoryUpdatedAt(nextVersion);
     } catch (error) {
-      if (silent) {
-        return;
-      }
+      if (silent) return;
       const reason = error instanceof Error ? error.message : String(error);
-      this.shortMemoryContent.innerHTML = `<div class="memory-empty">短期记忆加载失败: ${this.escapeHtml(reason)}</div>`;
-      this.longMemoryContent.innerHTML = `<div class="memory-empty">长期记忆加载失败: ${this.escapeHtml(reason)}</div>`;
+      this.shortMemoryContent.innerHTML = `<div class="memory-empty">事实加载失败: ${this.escapeHtml(reason)}</div>`;
+      this.longMemoryContent.innerHTML = `<div class="memory-empty">策略加载失败: ${this.escapeHtml(reason)}</div>`;
       if (this.memoryUpdatedAt) {
         this.memoryUpdatedAt.textContent = "更新时间: 刷新失败";
       }
@@ -128,49 +147,114 @@ class ChatApp {
     this.memoryUpdatedAt.textContent = `更新时间: ${this.formatDateTime(new Date())}`;
   }
 
-  renderShortMemories(items) {
+  renderFacts(facts) {
     if (!this.shortMemoryContent) {
       return;
     }
 
     this.shortMemoryContent.innerHTML = "";
-    if (!items.length) {
-      this.shortMemoryContent.innerHTML = '<div class="memory-empty">暂无短期记忆</div>';
-      return;
-    }
 
-    for (const item of items) {
-      const wrapper = document.createElement("div");
-      wrapper.className = "memory-doc";
+    // 构建事实展示 HTML
+    const roundCount = facts.round_count || 0;
+    const stage = facts.stage || "初始";
+    const priceTrajectory = facts.price_trajectory || [];
+    const budget = facts.budget || { "值": null, "依据": "" };
+    const deletedCoverages = facts["已删险种"] || [];
+    const currentCoverages = facts["当前险种"] || [];
+    const recentStrategy = facts["最近策略"] || {};
+    const coreConcern = facts["核心顾虑"] || "";
 
-      const header = document.createElement("div");
-      header.className = "memory-doc-header";
-      header.textContent =
-        typeof item.date === "string" && item.date ? item.date : "unknown-date";
-      wrapper.appendChild(header);
+    const html = `
+      <div class="fact-card">
+        <div class="fact-row">
+          <span class="fact-label">轮次:</span>
+          <span class="fact-value">${roundCount}</span>
+        </div>
+        <div class="fact-row">
+          <span class="fact-label">阶段:</span>
+          <span class="fact-value fact-stage">${stage}</span>
+        </div>
+        <div class="fact-row">
+          <span class="fact-label">价格轨迹:</span>
+          <span class="fact-value">${priceTrajectory.length ? priceTrajectory.join(" → ") : "—"}</span>
+        </div>
+        <div class="fact-row">
+          <span class="fact-label">预算:</span>
+          <span class="fact-value">${budget["值"] !== null ? budget["值"] + "元" : "未提及"}</span>
+        </div>
+        <div class="fact-row">
+          <span class="fact-label">当前险种:</span>
+          <span class="fact-value">${currentCoverages.length ? currentCoverages.join(", ") : "—"}</span>
+        </div>
+        ${deletedCoverages.length ? `
+        <div class="fact-row">
+          <span class="fact-label">已删险种:</span>
+          <span class="fact-value fact-deleted">${deletedCoverages.join(", ")}</span>
+        </div>
+        ` : ""}
+        <div class="fact-row">
+          <span class="fact-label">最近策略:</span>
+          <span class="fact-value">${recentStrategy["编码"] || "—"}</span>
+        </div>
+        <div class="fact-row">
+          <span class="fact-label">客户反应:</span>
+          <span class="fact-value">${recentStrategy["客户反应"] || "—"}</span>
+        </div>
+        <div class="fact-row">
+          <span class="fact-label">结果:</span>
+          <span class="fact-value fact-result-${recentStrategy["结果"] === "成功" ? "success" : recentStrategy["结果"] === "失败" ? "fail" : "unknown"}">${recentStrategy["结果"] || "—"}</span>
+        </div>
+        ${coreConcern ? `
+        <div class="fact-row">
+          <span class="fact-label">核心顾虑:</span>
+          <span class="fact-value fact-concern">${coreConcern}</span>
+        </div>
+        ` : ""}
+      </div>
+    `;
 
-      const body = document.createElement("div");
-      body.className = "memory-md";
-      const content = typeof item.content === "string" ? item.content : "";
-      body.innerHTML = this.renderMarkdownToHtml(content || "(空内容)");
-      wrapper.appendChild(body);
-
-      this.shortMemoryContent.appendChild(wrapper);
-    }
+    this.shortMemoryContent.innerHTML = html;
   }
 
-  renderLongMemory(item) {
+  renderStrategy(strategy, facts) {
     if (!this.longMemoryContent) {
       return;
     }
 
-    const content = item && typeof item.content === "string" ? item.content : "";
-    if (!content.trim()) {
-      this.longMemoryContent.innerHTML = '<div class="memory-empty">暂无长期记忆</div>';
+    const analysis = strategy["局势分析"] || "";
+    const mainStrategy = strategy["主策略"] || {};
+
+    if (!mainStrategy["编码"]) {
+      this.longMemoryContent.innerHTML = '<div class="memory-empty">暂无策略推荐</div>';
       return;
     }
 
-    this.longMemoryContent.innerHTML = `<div class="memory-md">${this.renderMarkdownToHtml(content)}</div>`;
+    const html = `
+      <div class="strategy-card">
+        <div class="strategy-section">
+          <div class="strategy-section-title">局势分析</div>
+          <div class="strategy-analysis">${this.escapeHtml(analysis)}</div>
+        </div>
+        <div class="strategy-section">
+          <div class="strategy-section-title">主策略</div>
+          <div class="strategy-main">
+            <div class="strategy-code">${mainStrategy["编码"] || ""}</div>
+            <div class="strategy-name">${this.escapeHtml(mainStrategy["名称"] || "")}</div>
+            <div class="strategy-module">模块: ${mainStrategy["模块"] || ""}</div>
+            <div class="strategy-action">动作: ${this.escapeHtml(mainStrategy["动作"] || "")}</div>
+            <div class="strategy-reason">理由: ${this.escapeHtml(mainStrategy["理由"] || "")}</div>
+          </div>
+        </div>
+        ${facts["核心顾虑"] ? `
+        <div class="strategy-section">
+          <div class="strategy-section-title">核心顾虑</div>
+          <div class="strategy-concern">${this.escapeHtml(facts["核心顾虑"])}</div>
+        </div>
+        ` : ""}
+      </div>
+    `;
+
+    this.longMemoryContent.innerHTML = html;
   }
 
   renderMarkdownToHtml(markdown) {
@@ -504,6 +588,7 @@ class ChatApp {
           message,
           history: this.history,
           thread_id: this.threadId || null,
+          use_middleware: this.middlewareToggle ? this.middlewareToggle.checked : true,
         }),
         signal: this.abortController.signal,
       });

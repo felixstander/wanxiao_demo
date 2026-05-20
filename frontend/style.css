@@ -414,6 +414,155 @@ body {
   overflow-x: auto;
 }
 
+/* 事实卡片样式 */
+.fact-card {
+  padding: 12px;
+}
+
+.fact-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 6px 0;
+  border-bottom: 1px solid #eef1f8;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.fact-row:last-child {
+  border-bottom: none;
+}
+
+.fact-label {
+  color: #6b7280;
+  font-weight: 500;
+  flex-shrink: 0;
+  min-width: 70px;
+}
+
+.fact-value {
+  color: #1f2937;
+  text-align: right;
+  word-break: break-all;
+}
+
+.fact-stage {
+  font-weight: 600;
+  color: #4f46e5;
+}
+
+.fact-deleted {
+  color: #ef4444;
+  text-decoration: line-through;
+}
+
+.fact-result-success {
+  color: #10b981;
+  font-weight: 600;
+}
+
+.fact-result-fail {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.fact-result-unknown {
+  color: #f59e0b;
+  font-weight: 600;
+}
+
+.fact-concern {
+  color: #dc2626;
+  font-weight: 600;
+}
+
+/* 策略卡片样式 */
+.strategy-card {
+  padding: 12px;
+}
+
+.strategy-section {
+  margin-bottom: 14px;
+}
+
+.strategy-section:last-child {
+  margin-bottom: 0;
+}
+
+.strategy-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #4f46e5;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 2px solid #e0e7ff;
+}
+
+.strategy-analysis {
+  font-size: 13px;
+  color: #374151;
+  line-height: 1.6;
+  background: #f8fafc;
+  padding: 8px;
+  border-radius: 6px;
+  border-left: 3px solid #4f46e5;
+}
+
+.strategy-main {
+  background: #f0f9ff;
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid #bae6fd;
+}
+
+.strategy-code {
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0369a1;
+  margin-bottom: 4px;
+}
+
+.strategy-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0c4a6e;
+  margin-bottom: 6px;
+}
+
+.strategy-module {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.strategy-action {
+  font-size: 12px;
+  color: #334155;
+  margin-bottom: 6px;
+}
+
+.strategy-reason {
+  font-size: 11px;
+  color: #475569;
+  line-height: 1.5;
+  background: #fff;
+  padding: 6px;
+  border-radius: 4px;
+}
+
+.strategy-concern {
+  font-size: 13px;
+  color: #dc2626;
+  font-weight: 600;
+  background: #fef2f2;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border-left: 3px solid #ef4444;
+}
+
 /* 聊天消息中的 Markdown 渲染样式 */
 .message-content .markdown-content {
   line-height: 1.65;
@@ -561,6 +710,21 @@ body {
   color: #25283f;
   background: #f1f4fb;
   border-bottom-left-radius: 6px;
+}
+
+.system-message {
+  align-self: center;
+  color: #6b7280;
+  background: #f3f4f6;
+  font-size: 12px;
+  padding: 6px 16px;
+  border-radius: 12px;
+  max-width: 90%;
+}
+
+.system-message .message-content p {
+  line-height: 1.4;
+  margin: 0;
 }
 
 .message-content p {

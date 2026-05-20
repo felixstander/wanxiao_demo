@@ -21,13 +21,12 @@ car_negotiate_demo.py
 import os
 from pathlib import Path
 
+from deepagents import create_deep_agent
+from deepagents.backends import FilesystemBackend
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
-
-from deepagents import create_deep_agent
-from deepagents.backends import FilesystemBackend
 
 from car_negotiate_middleware import CarNegotiateMiddleware
 from car_negotiate_tools import CAR_NEGOTIATE_TOOLS
@@ -102,34 +101,29 @@ DEMO_CONVERSATION = [
 ]
 
 
-def build_car_negotiate_agent():
-    """构建带有 CarNegotiateMiddleware 的车险谈判 Agent。"""
+def build_car_negotiate_agent(
+    use_middleware: bool = True, user_id: str = "demo-user-001"
+):
+    """构建带有 CarNegotiateMiddleware 的车险谈判 Agent。
+
+    Args:
+        use_middleware: 是否启用中间件（用于对比效果）
+        user_id: 用户ID，用于区分不同用户的会话数据
+    """
     api_key = os.getenv("OPENROUTER_API_KEY")
-    model_name = os.getenv("OPENROUTER_MODEL", "z-ai/glm-4.7-flash")
-    
+    model_name = "minimax/minimax-m2.5"
+    extrace_model_name = "qwen/qwen3.5-35b-a3b"
+
     if not api_key:
         raise RuntimeError("OPENROUTER_API_KEY is missing. Please set it in .env")
 
     os.environ["OPENAI_API_KEY"] = api_key
-    
+
     # 主模型
     llm = ChatOpenAI(
         model=model_name,
         base_url="https://openrouter.ai/api/v1",
         temperature=0.2,
-    )
-    
-    # 用于 after_agent 抽取信息的模型（可以用轻量级模型）
-    extraction_llm = ChatOpenAI(
-        model=model_name,
-        base_url="https://openrouter.ai/api/v1",
-        temperature=0.1,
-    )
-
-    # 创建中间件
-    middleware = CarNegotiateMiddleware(
-        extraction_llm=extraction_llm,
-        output_dir=PROJECT_ROOT / "middleware_logs",
     )
 
     # 构建 system prompt
@@ -161,18 +155,39 @@ def build_car_negotiate_agent():
     backend = FilesystemBackend(root_dir=str(PROJECT_ROOT))
     skills = [str(SKILLS_DIR)]
 
+    # 构建中间件列表
+    middleware_list = []
+    if use_middleware:
+        # 用于 after_agent 抽取事实 + before_agent 策略推荐的模型
+        middleware_llm = ChatOpenAI(
+            model=extrace_model_name,
+            base_url="https://openrouter.ai/api/v1",
+            temperature=0.1,
+        )
+        middleware = CarNegotiateMiddleware(
+            extraction_llm=middleware_llm,
+            strategy_llm=middleware_llm,
+            db_path=PROJECT_ROOT / "car_negotiate.db",
+            output_dir=PROJECT_ROOT / "middleware_logs",
+        )
+        middleware.set_user_id(user_id)
+        middleware_list.append(middleware)
+        print(f"✅ 中间件已启用 (user_id={user_id})")
+    else:
+        print("⚠️  中间件已禁用（用于对比效果）")
+
     agent = create_deep_agent(
         model=llm,
         tools=CAR_NEGOTIATE_TOOLS,
         store=InMemoryStore(),
         backend=backend,
         skills=skills,
-        middleware=[middleware],
+        middleware=middleware_list,
         checkpointer=MemorySaver(),
         system_prompt=system_prompt,
     )
 
-    return agent
+    return agent, middleware_list[0] if middleware_list else None
 
 
 def run_demo():
@@ -184,13 +199,15 @@ def run_demo():
     print(f"📂 中间件日志目录: {PROJECT_ROOT / 'middleware_logs'}")
     print("\n" + "=" * 80)
 
-    agent = build_car_negotiate_agent()
+    agent, _ = build_car_negotiate_agent(use_middleware=True)
     thread_id = "car-negotiate-demo-001"
-    
+
     # 逐轮执行对话
     for i, turn in enumerate(DEMO_CONVERSATION, 1):
         print(f"\n{'─' * 80}")
-        print(f"🔄 第 {i} 轮对话 | 预期阶段: {turn['stage']} | 预期 Skill: {turn['expected_skill']}")
+        print(
+            f"🔄 第 {i} 轮对话 | 预期阶段: {turn['stage']} | 预期 Skill: {turn['expected_skill']}"
+        )
         print(f"👤 用户: {turn['content']}")
         print("─" * 80)
 
@@ -212,16 +229,21 @@ def run_demo():
                 else:
                     msg_type = getattr(msg, "type", "")
                     content = getattr(msg, "content", "")
-                
+
                 if msg_type in ("ai", "assistant", "AIMessage"):
                     ai_reply = content if isinstance(content, str) else str(content)
                     break
 
-            print(f"🤖 坐席: {ai_reply[:300]}..." if len(ai_reply) > 300 else f"🤖 坐席: {ai_reply}")
+            print(
+                f"🤖 坐席: {ai_reply[:300]}..."
+                if len(ai_reply) > 300
+                else f"🤖 坐席: {ai_reply}"
+            )
 
         except Exception as e:
             print(f"❌ 错误: {e}")
             import traceback
+
             traceback.print_exc()
 
     print("\n" + "=" * 80)
